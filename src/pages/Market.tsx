@@ -1,17 +1,18 @@
 import { useMemo, useState } from 'react'
 import {
-  ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Tooltip, CartesianGrid,
+  ResponsiveContainer, ComposedChart, Line, Area, Scatter, XAxis, YAxis, Tooltip, CartesianGrid,
   LineChart, BarChart, Bar,
 } from 'recharts'
 import { useStore } from '../lib/store'
 import { MARKET_DATA, bookedDateSet } from '../data/mock'
-import { addDays, todayStr, formatKRW, formatManwon } from '../lib/date'
+import { addDays, todayStr, formatKRW, formatManwon, dayOfWeek } from '../lib/date'
 import { computeDayPrice } from '../lib/pricing'
+import { holidayName } from '../data/holidays'
 import { Card, PageTitle, StatCard } from '../components/ui'
 import type { Listing, MarketData } from '../types'
 
-/** 스캔할 체크인 시점 (오늘 기준 일수) */
-const SCAN_OFFSETS = [3, 7, 14, 21, 30, 45]
+/** 스캔할 체크인 시점 (오늘 기준 일수) — 향후 8주 주중·주말 혼합 14개 */
+const SCAN_OFFSETS = [2, 4, 7, 9, 11, 14, 17, 21, 25, 28, 35, 42, 49, 56]
 
 function RealMarket({ listing }: { listing: Listing }) {
   const { cloud, overrides, bookings } = useStore()
@@ -27,13 +28,15 @@ function RealMarket({ listing }: { listing: Listing }) {
     setScanning(true)
     setScanError('')
     const points = []
+    let competitors: { id: string; name?: string }[] = []
     let failed = 0
     for (let i = 0; i < SCAN_OFFSETS.length; i++) {
       const date = addDays(today, SCAN_OFFSETS[i])
       setProgress(`${i + 1}/${SCAN_OFFSETS.length} — ${date} 스캔 중…`)
       try {
         const p = await cloud.marketScan(listing.region, date, addDays(date, 1))
-        points.push({ date, ...p })
+        points.push({ date, count: p.count, p25: p.p25, median: p.median, p75: p.p75, p90: p.p90 })
+        if (p.listings.length > competitors.length) competitors = p.listings
       } catch {
         failed++
       }
@@ -41,7 +44,7 @@ function RealMarket({ listing }: { listing: Listing }) {
     if (points.length === 0) {
       setScanError('시장 데이터를 가져오지 못했습니다. 잠시 후 다시 시도하거나, 지역명을 더 일반적으로(예: "부산") 바꿔보세요.')
     } else {
-      const payload: MarketData = { scannedAt: new Date().toISOString(), points }
+      const payload: MarketData = { scannedAt: new Date().toISOString(), points, competitors }
       await cloud.saveMarket(listing.region, payload).catch(() => setScanError('저장 실패'))
       if (failed > 0) setScanError(`${failed}개 날짜는 표본 부족으로 제외됐습니다.`)
     }
@@ -52,13 +55,21 @@ function RealMarket({ listing }: { listing: Listing }) {
   const chartData = useMemo(() => {
     if (!data) return []
     const set = bookedDateSet(bookings, listing.id)
-    return data.points.map((p) => ({
-      date: p.date.slice(5).replace('-', '/'),
-      시장중앙값: p.median,
-      내추천가: computeDayPrice(listing, p.date, overrides, set).price,
-      band: [p.p25, p.p75] as [number, number],
-      count: p.count,
-    }))
+    return data.points.map((p) => {
+      const hol = holidayName(p.date)
+      return {
+        date: p.date.slice(5).replace('-', '/'),
+        rawDate: p.date,
+        시장중앙값: p.median,
+        내추천가: computeDayPrice(listing, p.date, overrides, set).price,
+        band1: [p.p25, p.median] as [number, number],
+        band2: [p.median, p.p75] as [number, number],
+        band3: [p.p75, p.p90 ?? p.p75] as [number, number],
+        휴일: hol ? 0 : null, // 공휴일 마커 (0 위치에 보라 점)
+        holidayName: hol,
+        count: p.count,
+      }
+    })
   }, [data, listing, overrides, bookings])
 
   const summary = useMemo(() => {
@@ -67,11 +78,17 @@ function RealMarket({ listing }: { listing: Listing }) {
     const marketAvg = medians.reduce((s, v) => s + v, 0) / medians.length
     const myAvg = chartData.reduce((s, d) => s + d.내추천가, 0) / chartData.length
     const avgCount = Math.round(data.points.reduce((s, p) => s + p.count, 0) / data.points.length)
+    const isWeekend = (date: string) => [5, 6].includes(dayOfWeek(date))
+    const weekend = data.points.filter((p) => isWeekend(p.date)).map((p) => p.median)
+    const weekday = data.points.filter((p) => !isWeekend(p.date)).map((p) => p.median)
+    const avg = (arr: number[]) => (arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0)
     return {
       marketAvg,
       myAvg,
       diffPct: Math.round(((myAvg - marketAvg) / marketAvg) * 100),
       avgCount,
+      weekendMedian: avg(weekend),
+      weekdayMedian: avg(weekday),
     }
   }, [data, chartData])
 
@@ -107,8 +124,16 @@ function RealMarket({ listing }: { listing: Listing }) {
       {data && summary && (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <StatCard label={`${listing.region} 경쟁 표본`} value={`평균 ${summary.avgCount}개`} sub="스캔 시점당 수집 가격 수" />
-            <StatCard label="시장 중앙값 (평균)" value={formatKRW(summary.marketAvg)} />
+            <StatCard
+              label="Market ADR (중앙값 평균)"
+              value={formatKRW(summary.marketAvg)}
+              sub={`표본 평균 ${summary.avgCount}개/시점`}
+            />
+            <StatCard
+              label="주말 vs 주중 중앙값"
+              value={`${formatManwon(summary.weekendMedian)} / ${formatManwon(summary.weekdayMedian)}`}
+              sub="금·토 / 그 외"
+            />
             <StatCard label="내 평균 추천가" value={formatKRW(summary.myAvg)} />
             <StatCard
               label="시장 대비 포지션"
@@ -119,35 +144,76 @@ function RealMarket({ listing }: { listing: Listing }) {
           </div>
 
           <Card>
-            <div className="font-semibold mb-1">날짜별 시장 가격 vs 내 추천가</div>
-            <p className="text-xs text-slate-400 mb-4">회색 밴드 = 시장 25~75% 구간 · 보라 선 = 시장 중앙값 · 빨간 선 = 내 추천가</p>
-            <div className="h-72">
+            <div className="font-semibold mb-1">내 가격은 시장 어디쯤인가?</div>
+            <p className="text-xs text-slate-400 mb-4">
+              <span className="text-slate-500">■ 25~50%</span> · <span className="text-rose-400">■ 50~75%</span> ·{' '}
+              <span className="text-rose-300">■ 75~90%</span> 시장 밴드 · <span className="text-indigo-500">— 시장 중앙값</span> ·{' '}
+              <span className="text-rose-600">— 내 추천가</span> · <span className="text-violet-500">● 공휴일</span>
+            </p>
+            <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                  <XAxis dataKey="date" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
                   <YAxis
                     tick={{ fontSize: 12 }} tickLine={false} axisLine={false}
                     tickFormatter={(v: number) => formatManwon(v)} width={48}
                   />
                   <Tooltip
-                    formatter={(v, name) =>
-                      name === 'band'
-                        ? [`${formatKRW((v as [number, number])[0])} ~ ${formatKRW((v as [number, number])[1])}`, '시장 25~75%']
-                        : [formatKRW(Number(v)), String(name)]
-                    }
+                    content={({ payload, label }) => {
+                      if (!payload?.length) return null
+                      const d = payload[0].payload as (typeof chartData)[number]
+                      return (
+                        <div className="rounded-lg bg-white border border-slate-200 shadow-md px-3 py-2 text-xs space-y-0.5">
+                          <div className="font-semibold">
+                            {label}
+                            {d.holidayName && <span className="text-violet-600 ml-1">({d.holidayName})</span>}
+                          </div>
+                          <div>시장 25~90%: {formatKRW(d.band1[0])} ~ {formatKRW(d.band3[1])}</div>
+                          <div className="text-indigo-600">시장 중앙값: {formatKRW(d.시장중앙값)}</div>
+                          <div className="text-rose-600">내 추천가: {formatKRW(d.내추천가)}</div>
+                          <div className="text-slate-400">표본 {d.count}개</div>
+                        </div>
+                      )
+                    }}
                   />
-                  <Area dataKey="band" fill="#cbd5e1" fillOpacity={0.4} stroke="none" />
-                  <Line type="monotone" dataKey="시장중앙값" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} />
-                  <Line type="monotone" dataKey="내추천가" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3 }} />
+                  <Area dataKey="band1" fill="#94a3b8" fillOpacity={0.35} stroke="none" />
+                  <Area dataKey="band2" fill="#fda4af" fillOpacity={0.5} stroke="none" />
+                  <Area dataKey="band3" fill="#fecdd3" fillOpacity={0.5} stroke="none" />
+                  <Line type="monotone" dataKey="시장중앙값" stroke="#6366f1" strokeWidth={2} dot={{ r: 2.5 }} />
+                  <Line type="monotone" dataKey="내추천가" stroke="#e11d48" strokeWidth={2.5} dot={{ r: 3 }} />
+                  <Scatter dataKey="휴일" fill="#8b5cf6" shape="circle" />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
           </Card>
 
+          {data.competitors && data.competitors.length > 0 && (
+            <Card className="mt-4">
+              <div className="font-semibold mb-1">검색에 잡힌 경쟁 숙소 ({data.competitors.length})</div>
+              <p className="text-xs text-slate-400 mb-3">
+                스캔 시점의 "{listing.region}" 검색 상위 결과 — 클릭하면 에어비앤비에서 열립니다
+              </p>
+              <div className="grid md:grid-cols-2 gap-2">
+                {data.competitors.map((c) => (
+                  <a
+                    key={c.id}
+                    href={`https://www.airbnb.co.kr/rooms/${c.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm hover:border-rose-300 hover:bg-rose-50/40 transition-colors"
+                  >
+                    <span className="truncate">{c.name ?? `숙소 #${c.id.slice(-6)}`}</span>
+                    <span className="text-slate-300 shrink-0 ml-2">↗</span>
+                  </a>
+                ))}
+              </div>
+            </Card>
+          )}
+
           <p className="text-xs text-slate-400 mt-3">
             ⚠️ 에어비앤비 공개 검색 결과 기반 추정치입니다. 검색 노출 순서·프로모션에 따라 표본이 달라질 수 있으며,
-            정확한 비교보다 가격 포지션 파악 용도로 활용하세요.
+            정확한 비교보다 가격 포지션 파악 용도로 활용하세요. (시장 점유율·예약 리드타임 지표는 로드맵에 있습니다)
           </p>
         </>
       )}

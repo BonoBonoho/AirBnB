@@ -46,11 +46,14 @@ export interface MarketPoint {
   p25: number
   median: number
   p75: number
+  p90?: number
 }
 
 export interface MarketData {
   scannedAt: string
   points: MarketPoint[]
+  /** 검색에서 잡힌 경쟁 숙소 (best-effort) */
+  competitors?: { id: string; name?: string }[]
 }
 
 /** 게스트 문열기 기록 */

@@ -61,9 +61,10 @@ export const api = {
   requestInboundAddress: (cfg: AppConfig) =>
     request<{ inboundKey: string }>(cfg, 'POST', '/api/inbound-address'),
   marketScan: (cfg: AppConfig, region: string, checkin: string, checkout: string) =>
-    request<{ count: number; p25: number; median: number; p75: number }>(
-      cfg, 'POST', '/api/market-scan', { region, checkin, checkout },
-    ),
+    request<{
+      count: number; p25: number; median: number; p75: number; p90: number
+      listings: { id: string; name?: string }[]
+    }>(cfg, 'POST', '/api/market-scan', { region, checkin, checkout }),
   putMarket: (cfg: AppConfig, region: string, data: MarketData) =>
     request<{ ok: boolean }>(cfg, 'PUT', '/api/market', { region, data }),
 }
