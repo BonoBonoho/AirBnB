@@ -29,6 +29,7 @@ interface Store {
     inboundKey: string | null
     requestInboundAddress: () => Promise<string>
     actualsCount: number
+    actuals: ActualPayout[]
     verification: VerificationMail | null
     /** 지역별 실제 시장 스캔 데이터 */
     market: Record<string, MarketData>
@@ -221,6 +222,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               return res.inboundKey
             },
             actualsCount: actuals.length,
+            actuals,
             verification,
             market,
             marketScan: (region: string, checkin: string, checkout: string) =>

@@ -59,6 +59,7 @@ export class EmailStack extends Stack {
       environment: {
         TABLE_NAME: props.tableName,
         TABLE_REGION: props.tableRegion,
+        RECEIVE_DOMAIN: receiveDomain,
       },
     })
     mailBucket.grantReadWrite(parseFn)
