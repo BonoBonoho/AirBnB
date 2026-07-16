@@ -27,17 +27,19 @@ interface StayPriceStackProps extends StackProps {
 }
 
 export class StayPriceStack extends Stack {
+  readonly table: dynamodb.Table
+
   constructor(scope: Construct, id: string, props?: StayPriceStackProps) {
     super(scope, id, props)
     const { domainName, certificate } = props ?? {}
 
     // ── 데이터: DynamoDB 단일 테이블 (pk=USER#<sub>, sk=LISTINGS|OVERRIDES|BOOKINGS)
-    const table = new dynamodb.Table(this, 'Table', {
+    const table = (this.table = new dynamodb.Table(this, 'Table', {
       partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'sk', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY, // MVP: 스택 삭제 시 데이터도 삭제
-    })
+    }))
 
     // ── 인증: Cognito (이메일 회원가입/로그인)
     const userPool = new cognito.UserPool(this, 'UserPool', {
@@ -149,6 +151,8 @@ export class StayPriceStack extends Stack {
           region: this.region,
           userPoolId: userPool.userPoolId,
           userPoolClientId: userPoolClient.userPoolClientId,
+          // 도메인이 있으면 정산 메일 수신 주소 도메인도 함께 노출
+          ...(domainName ? { emailDomain: `in.${domainName}` } : {}),
         }),
       ],
     })
