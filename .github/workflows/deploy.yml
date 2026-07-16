@@ -13,9 +13,9 @@ env:
   AWS_REGION: ap-northeast-2
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  # 저장소 변수(Settings → Secrets and variables → Actions → Variables)에
-  # DOMAIN_NAME을 설정하면 커스텀 도메인(ACM + Route 53)이 함께 배포된다.
-  DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+  # 기본 도메인은 stayprice.co (infra/bin/infra.ts). 저장소 변수 DOMAIN_NAME으로 덮어쓸 수 있다.
+  # 주의: 변수가 없으면 빈 문자열이 들어가 도메인 없이 배포되므로 || 기본값이 필수다.
+  DOMAIN_NAME: ${{ vars.DOMAIN_NAME || 'stayprice.co' }}
 
 jobs:
   deploy:
