@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useStore } from '../lib/store'
 import { CHANNEL_INFO } from '../data/mock'
 import type { ChannelId } from '../types'
@@ -6,7 +7,23 @@ import { Card, PageTitle } from '../components/ui'
 const ALL_CHANNELS: ChannelId[] = ['airbnb', 'yanolja', 'goodchoice', 'booking']
 
 export default function Channels() {
-  const { listings, updateListing } = useStore()
+  const { listings, updateListing, cloud } = useStore()
+  const [syncMsg, setSyncMsg] = useState('')
+  const [syncing, setSyncing] = useState(false)
+
+  const runSync = async () => {
+    if (!cloud) return
+    setSyncing(true)
+    setSyncMsg('')
+    try {
+      const count = await cloud.syncNow()
+      setSyncMsg(`✓ 동기화 완료 — 예약 ${count}건`)
+    } catch (e) {
+      setSyncMsg(`동기화 실패: ${e instanceof Error ? e.message : e}`)
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   return (
     <div>
@@ -16,8 +33,24 @@ export default function Channels() {
       />
 
       <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 px-5 py-4 text-sm text-blue-800">
-        ℹ️ 실제 API 연동(에어비앤비 공식 API, 야놀자·여기어때 파트너 API)은 다음 단계입니다.
-        현재는 어떤 채널에 가격을 동기화할지 설정만 저장됩니다.
+        <div className="font-semibold mb-1">📥 에어비앤비 실제 예약 가져오기 (iCal)</div>
+        에어비앤비 호스트 화면 → <b>달력 → 가용성 → 캘린더 연결 → 캘린더 내보내기</b>에서 iCal 주소를
+        복사해 아래 숙소별 입력란에 붙여넣으세요.{' '}
+        {cloud
+          ? '6시간마다 자동 동기화되며, 지금 바로 동기화할 수도 있습니다.'
+          : '데모 모드에서는 URL 저장만 되고, AWS 배포 후 동기화가 활성화됩니다.'}
+        {cloud && (
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              onClick={runSync}
+              disabled={syncing}
+              className="rounded-lg bg-blue-600 text-white px-4 py-1.5 text-xs font-semibold hover:bg-blue-700 disabled:opacity-50"
+            >
+              {syncing ? '동기화 중…' : '지금 동기화'}
+            </button>
+            {syncMsg && <span className="text-xs">{syncMsg}</span>}
+          </div>
+        )}
       </div>
 
       <div className="space-y-4">
@@ -32,6 +65,16 @@ export default function Channels() {
               {!l.active && (
                 <span className="ml-auto text-xs text-slate-400 bg-slate-100 rounded-full px-2.5 py-1">비활성 숙소</span>
               )}
+            </div>
+            <div className="mb-4">
+              <label className="text-xs font-medium text-slate-500">에어비앤비 iCal URL</label>
+              <input
+                type="url"
+                value={l.icalUrl ?? ''}
+                onChange={(e) => updateListing(l.id, { icalUrl: e.target.value || undefined })}
+                placeholder="https://www.airbnb.co.kr/calendar/ical/….ics?s=…"
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono placeholder:font-sans"
+              />
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {ALL_CHANNELS.map((c) => {

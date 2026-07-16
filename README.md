@@ -34,16 +34,46 @@ npm run build    # 프로덕션 빌드
 
 ## 기술 스택
 
-- Vite + React 19 + TypeScript
-- Tailwind CSS v4
-- React Router (hash 라우팅 — 정적 호스팅 호환)
-- Recharts (차트)
-- 데이터 저장: localStorage (MVP) — 예약·시장 데이터는 결정적 목업
+- **프론트엔드**: Vite + React 19 + TypeScript + Tailwind CSS v4 + Recharts
+- **백엔드 (AWS, `infra/`)**: CDK(TypeScript)로 정의
+  - **Cognito** — 이메일 회원가입/로그인
+  - **API Gateway(HTTP API) + Lambda** — 상태 저장/조회, iCal 동기화 API (Cognito JWT 인증)
+  - **DynamoDB** — 사용자별 숙소/가격규칙/수동가격/예약 저장
+  - **EventBridge** — 6시간마다 전체 사용자 iCal 자동 동기화
+  - **S3 + CloudFront** — 프론트엔드 정적 호스팅
+- **동작 모드**: 배포된 사이트는 `/config.json`을 읽어 **클라우드 모드**(로그인 + 서버 저장)로,
+  로컬 개발(`npm run dev`)은 config가 없으므로 **데모 모드**(localStorage + 목업)로 동작
+
+## 에어비앤비 실제 예약 연동 (iCal)
+
+1. 에어비앤비 호스트 → 달력 → 가용성 → **캘린더 연결 → 캘린더 내보내기**에서 iCal 주소 복사
+2. 스테이프라이스 **채널 연동** 페이지에서 숙소별 iCal URL 입력
+3. "지금 동기화" 클릭 (이후 6시간마다 자동 동기화) → 실제 예약이 캘린더/대시보드에 표시
+   - iCal에는 금액 정보가 없으므로 매출은 추천가 기준 추정치
+
+## AWS 배포 방법
+
+### A. GitHub Actions 자동 배포 (권장)
+
+1. AWS IAM에서 배포용 사용자 생성 (권한: `AdministratorAccess` 또는 CDK 배포 최소 권한)
+2. GitHub 저장소 → Settings → Secrets and variables → Actions 에 등록:
+   - `AWS_ACCESS_KEY_ID`
+   - `AWS_SECRET_ACCESS_KEY`
+3. `main` 브랜치에 push → `.github/workflows/deploy.yml`이 자동 실행
+4. Actions 로그의 `StayPrice.SiteUrl` 출력이 서비스 주소 (CloudFront)
+
+### B. 로컬에서 직접 배포
+
+```bash
+npm ci && npm run build          # 프론트엔드 빌드 (dist/)
+cd infra && npm ci
+npx cdk bootstrap                # 계정/리전 최초 1회
+npx cdk deploy StayPrice         # 배포 (리전: ap-northeast-2)
+```
 
 ## 다음 단계 (로드맵)
 
-1. 백엔드 + DB (예약·숙소·가격 이력 영속화, 사용자 인증)
-2. 에어비앤비 iCal/공식 API 연동으로 실제 예약·캘린더 동기화
-3. 야놀자·여기어때 파트너 API 연동
-4. 실제 시장 데이터 수집(경쟁 숙소 크롤링/데이터 제휴) 기반 수요 점수
-5. 가격 변경 이력·수익 리포트, 알림(카카오톡/이메일)
+1. 야놀자·여기어때 파트너 API 연동 (가격 내보내기)
+2. 실제 시장 데이터 수집(경쟁 숙소 크롤링/데이터 제휴) 기반 수요 점수
+3. 가격 변경 이력·수익 리포트, 알림(카카오톡/이메일)
+4. 숙소 추가/삭제 UI, 커스텀 도메인(Route 53 + ACM)
