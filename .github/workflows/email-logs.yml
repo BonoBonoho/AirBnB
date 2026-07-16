@@ -1,0 +1,36 @@
+name: Dump Email Lambda Logs
+
+# 정산 메일 파싱 Lambda의 최근 로그를 출력한다 (진단용, 수동 실행)
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: '최근 몇 분간의 로그'
+        required: true
+        default: '180'
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: us-east-1
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump ParseFn logs
+        run: |
+          set -euo pipefail
+          FOUND=$(aws logs describe-log-groups \
+            --query "logGroups[?contains(logGroupName, 'ParseFn')].logGroupName" --output text)
+          if [ -z "$FOUND" ]; then
+            echo "::warning::ParseFn 로그 그룹이 없습니다 (Lambda가 한 번도 실행되지 않았을 수 있음)"
+            aws logs describe-log-groups --query "logGroups[].logGroupName" --output text | tr '\t' '\n' | grep -i stayprice || true
+            exit 0
+          fi
+          START=$(( ($(date +%s) - ${{ inputs.minutes }} * 60) * 1000 ))
+          for G in $FOUND; do
+            echo "===== $G (최근 ${{ inputs.minutes }}분) ====="
+            aws logs filter-log-events --log-group-name "$G" --start-time "$START" \
+              --query "events[].message" --output text || true
+          done
