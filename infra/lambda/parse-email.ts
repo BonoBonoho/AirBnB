@@ -118,17 +118,27 @@ export async function handler(event: S3Event): Promise<void> {
         continue
       }
 
-      if (from.endsWith('@airbnb.com') || from.endsWith('.airbnb.com')) {
+      const isAirbnbSender = from.endsWith('@airbnb.com') || from.endsWith('.airbnb.com')
+      // 수동 전달(백필) 지원: 발신자가 에어비앤비가 아니어도 본문이 에어비앤비 정산 메일이면 인정.
+      // 수신 주소가 사용자별 비공개 키라서 위험은 낮다.
+      const looksLikeAirbnb = /airbnb|에어비앤비/i.test(`${subject}\n${text}`.slice(0, 3000))
+
+      if (isAirbnbSender || looksLikeAirbnb) {
         const payout = parseAirbnbEmail(subject, String(text), receivedAt)
-        if (payout) {
+        if (payout && (isAirbnbSender || payout.confirmationCode || payout.checkIn)) {
           const actuals = (await getDoc<ActualPayout[]>(sub, 'ACTUALS')) ?? []
           const rest = actuals.filter((a) => a.id !== payout.id)
           await putDoc(sub, 'ACTUALS', [...rest, payout].slice(-500))
-          console.log(`actual saved: ${payout.id} ₩${payout.amount}`)
-        } else {
-          console.log('airbnb mail without payout amount, skipped:', subject)
+          console.log(`actual saved: ${payout.id} ₩${payout.amount} (forwarded=${!isAirbnbSender})`)
+          continue
         }
-      } else if (/google|gmail|naver/.test(from) && /전달|확인|인증|verif|forward/i.test(subject + text)) {
+        if (isAirbnbSender) {
+          console.log('airbnb mail without payout amount, skipped:', subject)
+          continue
+        }
+      }
+
+      if (!looksLikeAirbnb && /google|gmail|naver/.test(from) && /전달|확인|인증|verif|forward/i.test(subject + text)) {
         // Gmail/네이버 전달 확인 메일 — 사용자가 UI에서 인증 코드/링크를 볼 수 있게 저장
         await putDoc(sub, 'VERIFICATION', {
           subject: subject.slice(0, 200),
