@@ -219,7 +219,14 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <div className="text-right shrink-0 ml-3">
-                    <div className="font-semibold">{formatKRW(b.totalPrice)}</div>
+                    <div className="font-semibold">
+                      {formatKRW(b.totalPrice)}
+                      {b.actual && (
+                        <span className="ml-1 text-[10px] font-semibold text-emerald-600 align-middle" title="정산 메일 기준 실제 금액">
+                          실제
+                        </span>
+                      )}
+                    </div>
                     <ChannelBadge name={ch.name} color={ch.color} />
                   </div>
                 </div>

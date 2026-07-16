@@ -42,6 +42,20 @@ export interface Booking {
   status: 'confirmed' | 'pending' | 'cancelled'
   /** 'ical' = 에어비앤비 캘린더에서 동기화된 실제 예약 */
   source?: 'ical' | 'mock'
+  /** true = 정산 메일에서 가져온 실제 금액이 반영됨 */
+  actual?: boolean
+}
+
+/** 정산 메일에서 파싱한 실제 정산 내역 */
+export interface ActualPayout {
+  id: string
+  checkIn: string | null
+  amount: number
+  guestName: string | null
+  listingName: string | null
+  confirmationCode: string | null
+  subject: string
+  receivedAt: string
 }
 
 export interface PriceOverride {

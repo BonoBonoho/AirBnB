@@ -4,6 +4,8 @@ export interface AppConfig {
   region: string
   userPoolId: string
   userPoolClientId: string
+  /** 정산 메일 수신 도메인 (예: in.stayprice.co) — 도메인 연결 후에만 존재 */
+  emailDomain?: string
 }
 
 let cached: AppConfig | null | undefined

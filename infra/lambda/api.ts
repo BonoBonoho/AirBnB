@@ -1,5 +1,7 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
-import { getDoc, putDoc, syncUserBookings } from './shared'
+import { randomBytes } from 'node:crypto'
+import { PutCommand } from '@aws-sdk/lib-dynamodb'
+import { ddb, TABLE_NAME, getDoc, putDoc, syncUserBookings } from './shared'
 import { fetchAirbnbListing } from './airbnb-import'
 
 const json = (statusCode: number, body: unknown): APIGatewayProxyResultV2 => ({
@@ -18,14 +20,42 @@ export async function handler(
   const path = event.rawPath
 
   try {
-    // 전체 상태 조회 (숙소 + 수동가격 + iCal 예약)
+    // 전체 상태 조회 (숙소 + 수동가격 + iCal 예약 + 실매출 + 메일수신 설정)
     if (method === 'GET' && path === '/api/state') {
-      const [listings, overrides, bookings] = await Promise.all([
+      const [listings, overrides, bookings, actuals, settings, verification] = await Promise.all([
         getDoc(sub, 'LISTINGS'),
         getDoc(sub, 'OVERRIDES'),
         getDoc(sub, 'BOOKINGS'),
+        getDoc(sub, 'ACTUALS'),
+        getDoc<{ inboundKey?: string }>(sub, 'SETTINGS'),
+        getDoc(sub, 'VERIFICATION'),
       ])
-      return json(200, { listings, overrides: overrides ?? [], bookings: bookings ?? [] })
+      return json(200, {
+        listings,
+        overrides: overrides ?? [],
+        bookings: bookings ?? [],
+        actuals: actuals ?? [],
+        inboundKey: settings?.inboundKey ?? null,
+        verification: verification ?? null,
+      })
+    }
+
+    // 정산 메일 수신 주소 발급 (이미 있으면 재사용)
+    if (method === 'POST' && path === '/api/inbound-address') {
+      const settings = (await getDoc<{ inboundKey?: string }>(sub, 'SETTINGS')) ?? {}
+      if (!settings.inboundKey) {
+        settings.inboundKey = randomBytes(6).toString('hex') // 12자 소문자 hex
+        await Promise.all([
+          putDoc(sub, 'SETTINGS', settings),
+          ddb.send(
+            new PutCommand({
+              TableName: TABLE_NAME,
+              Item: { pk: `INBOUND#${settings.inboundKey}`, sk: 'MAP', data: { sub } },
+            }),
+          ),
+        ])
+      }
+      return json(200, { inboundKey: settings.inboundKey })
     }
 
     // 전체 상태 저장

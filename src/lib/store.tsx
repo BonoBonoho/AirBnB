@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { Listing, Booking, PriceOverride } from '../types'
+import type { Listing, Booking, PriceOverride, ActualPayout } from '../types'
 import { DEFAULT_LISTINGS, generateBookings, bookedDateSet } from '../data/mock'
 import { computeDayPrice } from './pricing'
 import { addDays } from './date'
@@ -8,7 +8,7 @@ import type { AppConfig } from './config'
 import { loadConfig } from './config'
 import { initAuth, getIdToken, signOut as cognitoSignOut, currentUserEmail } from './auth'
 import { api } from './api'
-import type { ImportedListing } from './api'
+import type { ImportedListing, VerificationMail } from './api'
 import Login from '../pages/Login'
 
 const LS_LISTINGS = 'stayprice.listings.v1'
@@ -24,6 +24,12 @@ interface Store {
     signOut: () => void
     syncNow: () => Promise<number>
     importAirbnb: (url: string) => Promise<ImportedListing>
+    /** 정산 메일 수신 도메인 (도메인 연결 전엔 null) */
+    emailDomain: string | null
+    inboundKey: string | null
+    requestInboundAddress: () => Promise<string>
+    actualsCount: number
+    verification: VerificationMail | null
   } | null
   addListing: (listing: Listing) => void
   deleteListing: (id: string) => void
@@ -42,6 +48,22 @@ function load<T>(key: string, fallback: T): T {
   } catch {
     return fallback
   }
+}
+
+/** 정산 메일에서 온 실제 금액을 예약에 매칭 — 체크인 날짜(+숙소 이름) 기준 */
+function applyActuals(bookings: Booking[], actuals: ActualPayout[], listings: Listing[]): Booking[] {
+  if (!actuals.length) return bookings
+  const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase()
+  return bookings.map((b) => {
+    const match = actuals.find((a) => {
+      if (!a.checkIn || a.checkIn !== b.checkIn) return false
+      if (!a.listingName || listings.length <= 1) return true
+      const listing = listings.find((l) => l.id === b.listingId)
+      return listing ? norm(a.listingName).includes(norm(listing.name).slice(0, 10)) ||
+        norm(listing.name).includes(norm(a.listingName).slice(0, 10)) : true
+    })
+    return match ? { ...b, totalPrice: match.amount, actual: true } : b
+  })
 }
 
 /** iCal 예약(가격 정보 없음)에 추천가 기반 추정 매출을 채운다 */
@@ -67,6 +89,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [listings, setListings] = useState<Listing[]>(() => load(LS_LISTINGS, DEFAULT_LISTINGS))
   const [overrides, setOverrides] = useState<PriceOverride[]>(() => load(LS_OVERRIDES, []))
   const [remoteBookings, setRemoteBookings] = useState<Booking[]>([])
+  const [actuals, setActuals] = useState<ActualPayout[]>([])
+  const [inboundKey, setInboundKey] = useState<string | null>(null)
+  const [verification, setVerification] = useState<VerificationMail | null>(null)
 
   // 1) 설정 로드 → 클라우드/데모 모드 결정
   useEffect(() => {
@@ -89,6 +114,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setListings(state.listings ?? [])
         setOverrides(state.overrides)
         setRemoteBookings(state.bookings)
+        setActuals(state.actuals ?? [])
+        setInboundKey(state.inboundKey)
+        setVerification(state.verification)
         setRemoteLoaded(true)
       })
       .catch(console.error)
@@ -112,9 +140,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [listings, overrides, config, remoteLoaded])
 
   const bookings = useMemo(() => {
-    if (config) return estimatePrices(remoteBookings, listings, overrides)
-    return generateBookings(listings)
-  }, [config, remoteBookings, listings, overrides])
+    if (!config) return generateBookings(listings)
+    const estimated = estimatePrices(remoteBookings, listings, overrides)
+    return applyActuals(estimated, actuals, listings)
+  }, [config, remoteBookings, listings, overrides, actuals])
 
   const store: Store = useMemo(
     () => ({
@@ -135,6 +164,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               return res.bookings.length
             },
             importAirbnb: (url: string) => api.importAirbnb(config, url),
+            emailDomain: config.emailDomain ?? null,
+            inboundKey,
+            requestInboundAddress: async () => {
+              const res = await api.requestInboundAddress(config)
+              setInboundKey(res.inboundKey)
+              return res.inboundKey
+            },
+            actualsCount: actuals.length,
+            verification,
           }
         : null,
       addListing: (listing) => setListings((prev) => [...prev, listing]),
@@ -157,7 +195,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setOverrides([])
       },
     }),
-    [listings, bookings, overrides, config],
+    [listings, bookings, overrides, config, inboundKey, actuals, verification],
   )
 
   if (config === undefined) {

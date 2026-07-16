@@ -1,11 +1,20 @@
-import type { Listing, Booking, PriceOverride } from '../types'
+import type { Listing, Booking, PriceOverride, ActualPayout } from '../types'
 import type { AppConfig } from './config'
 import { getIdToken } from './auth'
+
+export interface VerificationMail {
+  subject: string
+  snippet: string
+  receivedAt: string
+}
 
 export interface RemoteState {
   listings: Listing[] | null
   overrides: PriceOverride[]
   bookings: Booking[]
+  actuals: ActualPayout[]
+  inboundKey: string | null
+  verification: VerificationMail | null
 }
 
 async function request<T>(cfg: AppConfig, method: string, path: string, body?: unknown): Promise<T> {
@@ -48,4 +57,6 @@ export const api = {
   sync: (cfg: AppConfig) => request<{ bookings: Booking[] }>(cfg, 'POST', '/api/sync'),
   importAirbnb: (cfg: AppConfig, url: string) =>
     request<ImportedListing>(cfg, 'POST', '/api/import', { url }),
+  requestInboundAddress: (cfg: AppConfig) =>
+    request<{ inboundKey: string }>(cfg, 'POST', '/api/inbound-address'),
 }

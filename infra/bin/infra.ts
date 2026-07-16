@@ -1,6 +1,7 @@
 import { App } from 'aws-cdk-lib'
 import { StayPriceStack } from '../lib/stayprice-stack'
 import { CertStack } from '../lib/cert-stack'
+import { EmailStack } from '../lib/email-stack'
 
 const app = new App()
 
@@ -19,9 +20,21 @@ const certStack = domainName
     })
   : undefined
 
-new StayPriceStack(app, 'StayPrice', {
+const main = new StayPriceStack(app, 'StayPrice', {
   env: { account, region },
   crossRegionReferences: true,
   domainName,
   certificate: certStack?.certificate,
 })
+
+// 에어비앤비 정산 메일 자동 수집 — 도메인이 있어야 수신 주소를 만들 수 있다 (SES 수신은 us-east-1)
+if (domainName) {
+  new EmailStack(app, 'StayPriceEmail', {
+    env: { account, region: 'us-east-1' },
+    crossRegionReferences: true,
+    domainName,
+    tableArn: main.table.tableArn,
+    tableName: main.table.tableName,
+    tableRegion: region,
+  })
+}

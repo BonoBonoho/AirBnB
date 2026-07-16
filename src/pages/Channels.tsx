@@ -6,6 +6,72 @@ import { Card, PageTitle } from '../components/ui'
 
 const ALL_CHANNELS: ChannelId[] = ['airbnb', 'yanolja', 'goodchoice', 'booking']
 
+function PayoutMailCard() {
+  const { cloud } = useStore()
+  const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
+  if (!cloud) return null
+
+  const address = cloud.inboundKey && cloud.emailDomain ? `${cloud.inboundKey}@${cloud.emailDomain}` : null
+
+  return (
+    <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-900">
+      <div className="font-semibold mb-1">💰 실매출 자동 수집 (정산 메일 파싱)</div>
+      {!cloud.emailDomain ? (
+        <p>
+          커스텀 도메인 연결 후 활성화됩니다. 도메인이 연결되면 전용 수신 주소가 발급되고,
+          Gmail에서 에어비앤비 메일만 자동 전달하면 실제 정산액이 대시보드에 반영됩니다.
+        </p>
+      ) : !address ? (
+        <div className="flex items-center gap-3">
+          <p>전용 수신 주소를 발급하면 Gmail 자동 전달로 실제 정산액을 수집할 수 있습니다.</p>
+          <button
+            onClick={async () => {
+              setBusy(true)
+              try { await cloud.requestInboundAddress() } finally { setBusy(false) }
+            }}
+            disabled={busy}
+            className="shrink-0 rounded-lg bg-emerald-600 text-white px-4 py-1.5 text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {busy ? '발급 중…' : '수신 주소 발급'}
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span>내 수신 주소:</span>
+            <code className="rounded bg-white border border-emerald-200 px-2 py-1 font-mono text-xs">{address}</code>
+            <button
+              onClick={() => { navigator.clipboard.writeText(address); setCopied(true); setTimeout(() => setCopied(false), 1500) }}
+              className="text-xs underline hover:text-emerald-700"
+            >
+              {copied ? '✓ 복사됨' : '복사'}
+            </button>
+            <span className="ml-auto text-xs">수집된 정산 내역: <b>{cloud.actualsCount}건</b></span>
+          </div>
+          <details className="text-xs">
+            <summary className="cursor-pointer font-medium">Gmail 자동 전달 설정 방법 (1회, 3분)</summary>
+            <ol className="list-decimal ml-4 mt-1.5 space-y-1">
+              <li>Gmail → ⚙️ 설정 → <b>전달 및 POP/IMAP</b> → "전달 주소 추가"에 위 주소 입력</li>
+              <li>Gmail이 위 주소로 확인 메일을 보냅니다 → 잠시 후 이 페이지를 새로고침하면 아래에 <b>인증 코드</b>가 표시됩니다</li>
+              <li>코드 입력으로 전달 주소 인증 완료</li>
+              <li>Gmail 검색창에 <code>from:airbnb.com</code> 입력 → 검색 옵션에서 <b>필터 만들기</b> → "전달" 체크 후 위 주소 선택</li>
+            </ol>
+            <p className="mt-1.5 text-emerald-700">에어비앤비 발신 메일만 전달되며, 그 외 메일이 와도 서버에서 즉시 삭제됩니다.</p>
+          </details>
+          {cloud.verification && (
+            <div className="rounded-lg bg-white border border-emerald-200 p-3 text-xs">
+              <div className="font-semibold mb-1">📨 전달 확인 메일 도착 ({cloud.verification.receivedAt.slice(0, 16).replace('T', ' ')})</div>
+              <div className="text-slate-600 mb-1">{cloud.verification.subject}</div>
+              <pre className="whitespace-pre-wrap text-slate-500 max-h-40 overflow-y-auto">{cloud.verification.snippet}</pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Channels() {
   const { listings, updateListing, cloud } = useStore()
   const [syncMsg, setSyncMsg] = useState('')
@@ -56,6 +122,8 @@ export default function Channels() {
           </div>
         )}
       </div>
+
+      {cloud && <PayoutMailCard />}
 
       <div className="space-y-4">
         {listings.map((l) => (
