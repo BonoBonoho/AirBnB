@@ -25,12 +25,31 @@ export interface ActualPayout {
   receivedAt: string
 }
 
+/** HTML 메일을 텍스트로 변환 — 태그 제거 + 주요 엔티티 복원 */
+export function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<(?:style|script)[^>]*>[\s\S]*?<\/(?:style|script)>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:p|div|tr|td|th|li|h[1-6]|table)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&#8361;|&#x20a9;/gi, '₩')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+}
+
 export function parseAirbnbEmail(
   subject: string,
   text: string,
   receivedAt: string,
 ): ActualPayout | null {
-  const src = `${subject}\n${text}`
+  // HTML이 섞여 있으면 텍스트로 정리 (라벨과 값 사이 태그가 정규식 매칭을 깨는 문제 방지)
+  const plain = /<[a-z][\s\S]*>/i.test(text) ? htmlToPlainText(text) : text
+  const src = `${subject}\n${plain}`
   const channel: 'airbnb' | 'booking' = /booking\.com|부킹닷컴/i.test(src) && !/airbnb|에어비앤비/i.test(subject)
     ? 'booking'
     : 'airbnb'
@@ -38,7 +57,7 @@ export function parseAirbnbEmail(
   // 금액: '호스트 수익/예상 수익/총액/총 요금 ₩423,000' 우선, 없으면 본문 최대 금액 (₩ 또는 KRW 표기)
   let amount: number | null = null
   const labeled = src.match(
-    /(?:호스트\s*수익|예상\s*수익|총\s*수익|총\s*요금|총\s*금액|정산|payout|total\s*price)[^\d₩]{0,40}(?:₩|KRW)\s*([\d,]+)/i,
+    /(?:호스트\s*수익|예상\s*수익|총\s*수익|총\s*요금|총\s*금액|정산|payout|total\s*price)[^\d₩]{0,80}(?:₩|KRW)\s*([\d,]+)/i,
   )
   if (labeled) {
     amount = Number(labeled[1].replace(/,/g, ''))
@@ -50,12 +69,12 @@ export function parseAirbnbEmail(
 
   // 체크인/체크아웃: '체크인 ... 2026년 8월 1일' 또는 '체크인 8월 1일' / ISO 형식
   const parseDate = (label: string): string | null => {
-    const m = src.match(new RegExp(`${label}[^\\d]{0,20}(?:(\\d{4})\\s*년\\s*)?(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일`))
+    const m = src.match(new RegExp(`${label}[^\\d]{0,60}(?:(\\d{4})\\s*년\\s*)?(\\d{1,2})\\s*월\\s*(\\d{1,2})\\s*일`))
     if (m) {
       const year = m[1] ? Number(m[1]) : Number(receivedAt.slice(0, 4))
       return `${year}-${String(Number(m[2])).padStart(2, '0')}-${String(Number(m[3])).padStart(2, '0')}`
     }
-    const iso = src.match(new RegExp(`${label}[^\\d]{0,20}(\\d{4})-(\\d{2})-(\\d{2})`))
+    const iso = src.match(new RegExp(`${label}[^\\d]{0,60}(\\d{4})-(\\d{2})-(\\d{2})`))
     return iso ? `${iso[1]}-${iso[2]}-${iso[3]}` : null
   }
   const checkIn = parseDate('체크인')
@@ -133,7 +152,7 @@ export async function handler(event: S3Event): Promise<void> {
         .find((local) => /^[a-z0-9]{8,32}$/.test(local))
       const from = (mail.from?.value?.[0]?.address ?? '').toLowerCase()
       const subject = mail.subject ?? ''
-      const text = mail.text ?? mail.html ?? ''
+      const text = mail.text || (typeof mail.html === 'string' ? mail.html : '')
       const receivedAt = (mail.date ?? new Date()).toISOString()
 
       const sub = inboundKey ? await subForInboundKey(inboundKey) : null
@@ -160,10 +179,12 @@ export async function handler(event: S3Event): Promise<void> {
           console.log(`actual saved: ${payout.id} ₩${payout.amount} (forwarded=${!isOtaSender})`)
           continue
         }
-        if (isOtaSender) {
-          console.log('airbnb mail without payout amount, skipped:', subject)
-          continue
-        }
+        // 파싱 실패 진단용 — 제목과 본문 앞부분을 남긴다
+        console.log(
+          `ota-like mail but parse failed (from=${from}): ${subject} | text[0:200]=`,
+          String(text).slice(0, 200).replace(/\s+/g, ' '),
+        )
+        if (isOtaSender) continue
       }
 
       if (!looksLikeAirbnb && /google|gmail|naver/.test(from) && /전달|확인|인증|verif|forward/i.test(subject + text)) {
