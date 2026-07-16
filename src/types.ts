@@ -23,6 +23,8 @@ export interface Listing {
   channels: ChannelId[]
   rules: PricingRules
   active: boolean
+  /** 에어비앤비 캘린더 내보내기(iCal) URL — 설정 시 실제 예약이 동기화된다 */
+  icalUrl?: string
 }
 
 export interface Booking {
@@ -34,6 +36,8 @@ export interface Booking {
   nights: number
   totalPrice: number
   status: 'confirmed' | 'pending' | 'cancelled'
+  /** 'ical' = 에어비앤비 캘린더에서 동기화된 실제 예약 */
+  source?: 'ical' | 'mock'
 }
 
 export interface PriceOverride {

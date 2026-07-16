@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom'
+import { useStore } from '../lib/store'
 
 const NAV = [
   { to: '/', label: '대시보드', icon: '📊' },
@@ -10,6 +11,7 @@ const NAV = [
 ]
 
 export default function Layout() {
+  const { cloud } = useStore()
   return (
     <div className="flex min-h-screen">
       <aside className="w-56 shrink-0 border-r border-slate-200 bg-white flex flex-col">
@@ -37,7 +39,16 @@ export default function Layout() {
           ))}
         </nav>
         <div className="p-4 text-[11px] text-slate-400 border-t border-slate-100">
-          MVP 데모 · 데이터는 브라우저에 저장됩니다
+          {cloud ? (
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate" title={cloud.email}>☁️ {cloud.email}</span>
+              <button onClick={cloud.signOut} className="shrink-0 underline hover:text-rose-600">
+                로그아웃
+              </button>
+            </div>
+          ) : (
+            'MVP 데모 · 데이터는 브라우저에 저장됩니다'
+          )}
         </div>
       </aside>
       <main className="flex-1 min-w-0 p-6 lg:p-8">

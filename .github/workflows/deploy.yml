@@ -1,0 +1,46 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            infra/package-lock.json
+
+      - name: Build frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install infra dependencies
+        working-directory: infra
+        run: npm ci
+
+      - name: CDK bootstrap (first run only, no-op afterwards)
+        working-directory: infra
+        run: npx cdk bootstrap
+
+      - name: CDK deploy
+        working-directory: infra
+        run: npx cdk deploy StayPrice --require-approval never
