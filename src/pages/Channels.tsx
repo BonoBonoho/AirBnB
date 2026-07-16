@@ -66,6 +66,37 @@ function PayoutMailCard() {
               <pre className="whitespace-pre-wrap text-slate-500 max-h-40 overflow-y-auto">{cloud.verification.snippet}</pre>
             </div>
           )}
+          {cloud.actuals.length > 0 && (
+            <details className="text-xs" open={cloud.actuals.length <= 8}>
+              <summary className="cursor-pointer font-medium">수집된 정산 내역 보기 ({cloud.actuals.length}건)</summary>
+              <div className="mt-2 rounded-lg bg-white border border-emerald-200 overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-slate-400 border-b border-emerald-100">
+                      <th className="text-left px-3 py-2 font-medium">체크인</th>
+                      <th className="text-left px-3 py-2 font-medium">게스트</th>
+                      <th className="text-right px-3 py-2 font-medium">정산액</th>
+                      <th className="text-left px-3 py-2 font-medium">출처</th>
+                      <th className="text-left px-3 py-2 font-medium">수집 시각</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...cloud.actuals]
+                      .sort((a, b) => (b.checkIn ?? '').localeCompare(a.checkIn ?? ''))
+                      .map((a) => (
+                        <tr key={a.id} className="border-b border-emerald-50 last:border-0">
+                          <td className="px-3 py-1.5">{a.checkIn ?? '?'}{a.nights ? ` (${a.nights}박)` : ''}</td>
+                          <td className="px-3 py-1.5">{a.guestName ?? '-'}</td>
+                          <td className="px-3 py-1.5 text-right font-semibold">₩{a.amount.toLocaleString('ko-KR')}</td>
+                          <td className="px-3 py-1.5">{a.channel === 'booking' ? 'Booking.com' : '에어비앤비'}</td>
+                          <td className="px-3 py-1.5 text-slate-400">{a.receivedAt.slice(5, 16).replace('T', ' ')}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
         </div>
       )}
     </div>

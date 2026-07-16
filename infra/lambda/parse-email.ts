@@ -147,9 +147,17 @@ export async function handler(event: S3Event): Promise<void> {
       const to = [mail.to, mail.cc]
         .flatMap((a) => (a ? ('value' in a ? a.value : a.flatMap((x) => x.value)) : []))
         .map((v) => v.address?.toLowerCase() ?? '')
-      const inboundKey = to
+      let inboundKey = to
         .map((addr) => addr.split('@')[0])
         .find((local) => /^[a-z0-9]{8,32}$/.test(local))
+      // Gmail 자동전달은 To 헤더가 원래 주소로 남는다 → 원문에서 수신 도메인 주소를 직접 스캔
+      const receiveDomain = (process.env.RECEIVE_DOMAIN ?? '').toLowerCase()
+      if (!inboundKey && receiveDomain) {
+        const m = Buffer.from(raw)
+          .toString('utf8')
+          .match(new RegExp(`([a-z0-9]{8,32})@${receiveDomain.replace(/\./g, '\\.')}`, 'i'))
+        if (m) inboundKey = m[1].toLowerCase()
+      }
       const from = (mail.from?.value?.[0]?.address ?? '').toLowerCase()
       const subject = mail.subject ?? ''
       const text = mail.text || (typeof mail.html === 'string' ? mail.html : '')
@@ -165,9 +173,12 @@ export async function handler(event: S3Event): Promise<void> {
         from.endsWith('@airbnb.com') || from.endsWith('.airbnb.com') ||
         from.endsWith('@booking.com') || from.endsWith('.booking.com')
       // 수동 전달(백필) 지원: 발신자가 OTA가 아니어도 본문이 예약/정산 메일이면 인정.
-      // 수신 주소가 사용자별 비공개 키라서 위험은 낮다.
+      // HTML 메일은 앞부분이 스타일 코드라 원문 슬라이스로는 판별이 안 되므로 태그 제거 후 검사.
+      const plainForGate = /<[a-z][\s\S]*>/i.test(String(text))
+        ? htmlToPlainText(String(text))
+        : String(text)
       const looksLikeAirbnb = /airbnb|에어비앤비|booking\.com|부킹닷컴/i.test(
-        `${subject}\n${text}`.slice(0, 3000),
+        `${subject}\n${plainForGate}`.slice(0, 8000),
       )
 
       if (isOtaSender || looksLikeAirbnb) {
