@@ -32,7 +32,12 @@ interface Store {
     verification: VerificationMail | null
     /** 지역별 실제 시장 스캔 데이터 */
     market: Record<string, MarketData>
-    marketScan: (region: string, checkin: string, checkout: string) => Promise<{ count: number; p25: number; median: number; p75: number }>
+    marketScan: (
+      region: string, checkin: string, checkout: string,
+    ) => Promise<{
+      count: number; p25: number; median: number; p75: number; p90: number
+      listings: { id: string; name?: string }[]
+    }>
     saveMarket: (region: string, data: MarketData) => Promise<void>
   } | null
   addListing: (listing: Listing) => void
