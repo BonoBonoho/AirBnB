@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { Listing, Booking, PriceOverride, ActualPayout } from '../types'
+import type { Listing, Booking, PriceOverride, ActualPayout, MarketData } from '../types'
 import { DEFAULT_LISTINGS, generateBookings, bookedDateSet } from '../data/mock'
 import { computeDayPrice } from './pricing'
 import { addDays } from './date'
@@ -30,6 +30,10 @@ interface Store {
     requestInboundAddress: () => Promise<string>
     actualsCount: number
     verification: VerificationMail | null
+    /** 지역별 실제 시장 스캔 데이터 */
+    market: Record<string, MarketData>
+    marketScan: (region: string, checkin: string, checkout: string) => Promise<{ count: number; p25: number; median: number; p75: number }>
+    saveMarket: (region: string, data: MarketData) => Promise<void>
   } | null
   addListing: (listing: Listing) => void
   deleteListing: (id: string) => void
@@ -92,6 +96,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [actuals, setActuals] = useState<ActualPayout[]>([])
   const [inboundKey, setInboundKey] = useState<string | null>(null)
   const [verification, setVerification] = useState<VerificationMail | null>(null)
+  const [market, setMarket] = useState<Record<string, MarketData>>({})
 
   // 1) 설정 로드 → 클라우드/데모 모드 결정
   useEffect(() => {
@@ -117,6 +122,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setActuals(state.actuals ?? [])
         setInboundKey(state.inboundKey)
         setVerification(state.verification)
+        setMarket(state.market ?? {})
         setRemoteLoaded(true)
       })
       .catch(console.error)
@@ -173,6 +179,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             },
             actualsCount: actuals.length,
             verification,
+            market,
+            marketScan: (region: string, checkin: string, checkout: string) =>
+              api.marketScan(config, region, checkin, checkout),
+            saveMarket: async (region: string, data: MarketData) => {
+              await api.putMarket(config, region, data)
+              setMarket((prev) => ({ ...prev, [region]: data }))
+            },
           }
         : null,
       addListing: (listing) => setListings((prev) => [...prev, listing]),
@@ -195,7 +208,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setOverrides([])
       },
     }),
-    [listings, bookings, overrides, config, inboundKey, actuals, verification],
+    [listings, bookings, overrides, config, inboundKey, actuals, verification, market],
   )
 
   if (config === undefined) {

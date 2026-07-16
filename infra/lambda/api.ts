@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { PutCommand } from '@aws-sdk/lib-dynamodb'
 import { ddb, TABLE_NAME, getDoc, putDoc, syncUserBookings } from './shared'
 import { fetchAirbnbListing } from './airbnb-import'
+import { scanMarket } from './market-scan'
 
 const json = (statusCode: number, body: unknown): APIGatewayProxyResultV2 => ({
   statusCode,
@@ -20,16 +21,18 @@ export async function handler(
   const path = event.rawPath
 
   try {
-    // 전체 상태 조회 (숙소 + 수동가격 + iCal 예약 + 실매출 + 메일수신 설정)
+    // 전체 상태 조회 (숙소 + 수동가격 + iCal 예약 + 실매출 + 메일수신 설정 + 시장 데이터)
     if (method === 'GET' && path === '/api/state') {
-      const [listings, overrides, bookings, actuals, settings, verification] = await Promise.all([
-        getDoc(sub, 'LISTINGS'),
-        getDoc(sub, 'OVERRIDES'),
-        getDoc(sub, 'BOOKINGS'),
-        getDoc(sub, 'ACTUALS'),
-        getDoc<{ inboundKey?: string }>(sub, 'SETTINGS'),
-        getDoc(sub, 'VERIFICATION'),
-      ])
+      const [listings, overrides, bookings, actuals, settings, verification, market] =
+        await Promise.all([
+          getDoc(sub, 'LISTINGS'),
+          getDoc(sub, 'OVERRIDES'),
+          getDoc(sub, 'BOOKINGS'),
+          getDoc(sub, 'ACTUALS'),
+          getDoc<{ inboundKey?: string }>(sub, 'SETTINGS'),
+          getDoc(sub, 'VERIFICATION'),
+          getDoc(sub, 'MARKET'),
+        ])
       return json(200, {
         listings,
         overrides: overrides ?? [],
@@ -37,7 +40,29 @@ export async function handler(
         actuals: actuals ?? [],
         inboundKey: settings?.inboundKey ?? null,
         verification: verification ?? null,
+        market: market ?? {},
       })
+    }
+
+    // 시장 스캔 — 지역·날짜 하나에 대한 경쟁 가격 분포 (저장은 클라이언트가 PUT /api/market으로)
+    if (method === 'POST' && path === '/api/market-scan') {
+      const { region, checkin, checkout } = JSON.parse(event.body ?? '{}')
+      if (!region || !checkin || !checkout) return json(400, { error: 'region/checkin/checkout 필요' })
+      try {
+        return json(200, await scanMarket(String(region), String(checkin), String(checkout)))
+      } catch (e) {
+        return json(422, { error: e instanceof Error ? e.message : '스캔 실패' })
+      }
+    }
+
+    // 시장 데이터 저장 (지역별 병합)
+    if (method === 'PUT' && path === '/api/market') {
+      const { region, data } = JSON.parse(event.body ?? '{}')
+      if (!region || !data) return json(400, { error: 'region/data 필요' })
+      const market = (await getDoc<Record<string, unknown>>(sub, 'MARKET')) ?? {}
+      market[String(region)] = data
+      await putDoc(sub, 'MARKET', market)
+      return json(200, { ok: true })
     }
 
     // 정산 메일 수신 주소 발급 (이미 있으면 재사용)

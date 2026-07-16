@@ -1,4 +1,4 @@
-import type { Listing, Booking, PriceOverride, ActualPayout } from '../types'
+import type { Listing, Booking, PriceOverride, ActualPayout, MarketData } from '../types'
 import type { AppConfig } from './config'
 import { getIdToken } from './auth'
 
@@ -15,6 +15,7 @@ export interface RemoteState {
   actuals: ActualPayout[]
   inboundKey: string | null
   verification: VerificationMail | null
+  market: Record<string, MarketData>
 }
 
 async function request<T>(cfg: AppConfig, method: string, path: string, body?: unknown): Promise<T> {
@@ -59,4 +60,10 @@ export const api = {
     request<ImportedListing>(cfg, 'POST', '/api/import', { url }),
   requestInboundAddress: (cfg: AppConfig) =>
     request<{ inboundKey: string }>(cfg, 'POST', '/api/inbound-address'),
+  marketScan: (cfg: AppConfig, region: string, checkin: string, checkout: string) =>
+    request<{ count: number; p25: number; median: number; p75: number }>(
+      cfg, 'POST', '/api/market-scan', { region, checkin, checkout },
+    ),
+  putMarket: (cfg: AppConfig, region: string, data: MarketData) =>
+    request<{ ok: boolean }>(cfg, 'PUT', '/api/market', { region, data }),
 }
