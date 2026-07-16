@@ -8,9 +8,10 @@ const app = new App()
 const account = process.env.CDK_DEFAULT_ACCOUNT
 const region = process.env.CDK_DEFAULT_REGION ?? process.env.AWS_REGION ?? 'ap-northeast-2'
 
-// 커스텀 도메인 (예: stayprice.com) — Route 53에 호스팅 영역이 있어야 한다.
-// GitHub Actions에서는 저장소 변수(vars.DOMAIN_NAME)로 주입되며, 비어 있으면 CloudFront 기본 도메인만 사용.
-const domainName = process.env.DOMAIN_NAME || undefined
+// 커스텀 도메인 — Route 53에 호스팅 영역이 있어야 한다 (Route 53에서 구매 시 자동 생성).
+// 환경변수 DOMAIN_NAME으로 덮어쓸 수 있고, 빈 문자열('')을 주면 도메인 없이 배포된다.
+const domainName =
+  process.env.DOMAIN_NAME !== undefined ? process.env.DOMAIN_NAME || undefined : 'stayprice.co'
 
 const certStack = domainName
   ? new CertStack(app, 'StayPriceCert', {

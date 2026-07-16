@@ -62,13 +62,15 @@ npm run build    # 프로덕션 빌드
 3. `main` 브랜치에 push → `.github/workflows/deploy.yml`이 자동 실행
 4. Actions 로그의 `StayPrice.SiteUrl` 출력이 서비스 주소 (CloudFront)
 
-### 커스텀 도메인 연결 (선택)
+### 커스텀 도메인 연결
 
-1. Route 53에 도메인 등록 (또는 외부 도메인의 네임서버를 Route 53 호스팅 영역으로 위임)
-2. GitHub 저장소 → Settings → Secrets and variables → Actions → **Variables** 탭에
-   `DOMAIN_NAME` = `내도메인.com` 등록
-3. 재배포하면 ACM 인증서(us-east-1) 발급·검증, CloudFront 도메인 연결,
-   A/AAAA 레코드(apex + www)가 자동 생성된다 → `https://내도메인.com` 접속
+기본 도메인은 `stayprice.co`로 설정되어 있다 (`infra/bin/infra.ts`).
+Route 53에 해당 도메인의 호스팅 영역이 있어야 하며(Route 53에서 구매 시 자동 생성),
+배포하면 ACM 인증서(us-east-1) 발급·검증, CloudFront 연결, A/AAAA 레코드(apex + www),
+정산 메일 수신 도메인(`in.stayprice.co`)까지 자동 구성된다.
+
+- 다른 도메인 사용: 저장소 변수 또는 환경변수 `DOMAIN_NAME`으로 덮어쓰기
+- 도메인 없이 배포: `DOMAIN_NAME`을 빈 문자열로 설정
 
 ### B. 로컬에서 직접 배포
 
