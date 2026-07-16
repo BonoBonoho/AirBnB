@@ -15,11 +15,42 @@ const EMPTY_FORM = {
   maxGuests: 2,
   thumbnail: '🏠',
   basePrice: 100000,
+  photoUrl: '',
+  airbnbRoomId: '',
 }
 
 function AddListingForm({ onDone }: { onDone: () => void }) {
-  const { addListing } = useStore()
+  const { addListing, cloud } = useStore()
   const [form, setForm] = useState(EMPTY_FORM)
+  const [importUrl, setImportUrl] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [importMsg, setImportMsg] = useState('')
+
+  const runImport = async () => {
+    if (!cloud || !importUrl.trim()) return
+    setImporting(true)
+    setImportMsg('')
+    try {
+      const r = await cloud.importAirbnb(importUrl.trim())
+      setForm((f) => ({
+        ...f,
+        name: r.name ?? f.name,
+        type: r.type ?? f.type,
+        bedrooms: r.bedrooms ?? f.bedrooms,
+        maxGuests: r.maxGuests ?? f.maxGuests,
+        photoUrl: r.photoUrl ?? f.photoUrl,
+        airbnbRoomId: r.airbnbRoomId,
+      }))
+      const filled = [r.name && '이름', r.bedrooms && '침실', r.maxGuests && '인원', r.photoUrl && '사진']
+        .filter(Boolean)
+        .join(', ')
+      setImportMsg(filled ? `✓ 불러옴: ${filled} — 지역·기본가는 직접 입력하세요` : '정보를 찾지 못했습니다. 직접 입력해 주세요.')
+    } catch (e) {
+      setImportMsg(`불러오기 실패: ${e instanceof Error ? e.message : e} — 직접 입력해 주세요.`)
+    } finally {
+      setImporting(false)
+    }
+  }
 
   const submit = () => {
     if (!form.name.trim() || !form.region.trim() || form.basePrice <= 0) return
@@ -31,6 +62,8 @@ function AddListingForm({ onDone }: { onDone: () => void }) {
       bedrooms: form.bedrooms,
       maxGuests: form.maxGuests,
       thumbnail: form.thumbnail,
+      photoUrl: form.photoUrl || undefined,
+      airbnbRoomId: form.airbnbRoomId || undefined,
       channels: ['airbnb'],
       active: true,
       rules: {
@@ -52,6 +85,36 @@ function AddListingForm({ onDone }: { onDone: () => void }) {
   return (
     <Card className="border-rose-200">
       <div className="font-semibold mb-4">새 숙소 등록</div>
+
+      {cloud && (
+        <div className="mb-5 rounded-xl bg-slate-50 border border-slate-200 p-4">
+          <div className="text-sm font-medium mb-1">🔗 에어비앤비 링크로 불러오기</div>
+          <p className="text-xs text-slate-400 mb-2">
+            숙소 페이지 주소를 붙여넣으면 이름·침실·인원·사진을 자동으로 채웁니다 (공개 정보 기준, 일부만 될 수도 있어요)
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="url"
+              value={importUrl}
+              onChange={(e) => setImportUrl(e.target.value)}
+              placeholder="https://www.airbnb.co.kr/rooms/12345678"
+              className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            />
+            <button
+              onClick={runImport}
+              disabled={importing || !importUrl.trim()}
+              className="shrink-0 rounded-lg bg-slate-800 text-white px-4 py-2 text-sm font-medium hover:bg-slate-700 disabled:opacity-40"
+            >
+              {importing ? '불러오는 중…' : '불러오기'}
+            </button>
+          </div>
+          {importMsg && <p className="text-xs mt-2 text-slate-600">{importMsg}</p>}
+          {form.photoUrl && (
+            <img src={form.photoUrl} alt="숙소 사진" className="mt-3 h-24 rounded-lg object-cover" />
+          )}
+        </div>
+      )}
+
       <div className="grid md:grid-cols-2 gap-4">
         <div>
           <label className="text-sm font-medium">숙소 이름 *</label>
@@ -213,7 +276,11 @@ export default function Listings() {
             <Card key={l.id} className={l.active ? '' : 'opacity-60'}>
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="text-3xl">{l.thumbnail}</div>
+                  {l.photoUrl ? (
+                    <img src={l.photoUrl} alt="" className="w-12 h-12 rounded-lg object-cover" />
+                  ) : (
+                    <div className="text-3xl">{l.thumbnail}</div>
+                  )}
                   <div>
                     <div className="font-semibold">{l.name}</div>
                     <div className="text-xs text-slate-500">

@@ -25,6 +25,10 @@ export interface Listing {
   active: boolean
   /** 에어비앤비 캘린더 내보내기(iCal) URL — 설정 시 실제 예약이 동기화된다 */
   icalUrl?: string
+  /** 에어비앤비 링크로 불러온 경우의 숙소 사진 URL */
+  photoUrl?: string
+  /** 에어비앤비 room ID (링크로 불러온 경우) */
+  airbnbRoomId?: string
 }
 
 export interface Booking {

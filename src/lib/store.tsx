@@ -8,6 +8,7 @@ import type { AppConfig } from './config'
 import { loadConfig } from './config'
 import { initAuth, getIdToken, signOut as cognitoSignOut, currentUserEmail } from './auth'
 import { api } from './api'
+import type { ImportedListing } from './api'
 import Login from '../pages/Login'
 
 const LS_LISTINGS = 'stayprice.listings.v1'
@@ -18,7 +19,12 @@ interface Store {
   bookings: Booking[]
   overrides: PriceOverride[]
   /** null = 데모(로컬) 모드, 아니면 AWS 클라우드 모드 */
-  cloud: { email: string; signOut: () => void; syncNow: () => Promise<number> } | null
+  cloud: {
+    email: string
+    signOut: () => void
+    syncNow: () => Promise<number>
+    importAirbnb: (url: string) => Promise<ImportedListing>
+  } | null
   addListing: (listing: Listing) => void
   deleteListing: (id: string) => void
   updateListing: (id: string, patch: Partial<Listing>) => void
@@ -128,6 +134,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               setRemoteBookings(res.bookings)
               return res.bookings.length
             },
+            importAirbnb: (url: string) => api.importAirbnb(config, url),
           }
         : null,
       addListing: (listing) => setListings((prev) => [...prev, listing]),
