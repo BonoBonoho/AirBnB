@@ -83,7 +83,9 @@ export interface Booking {
 /** 정산 메일에서 파싱한 실제 정산 내역 */
 export interface ActualPayout {
   id: string
+  channel?: 'airbnb' | 'booking'
   checkIn: string | null
+  nights?: number | null
   amount: number
   guestName: string | null
   listingName: string | null

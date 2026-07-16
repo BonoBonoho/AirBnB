@@ -59,20 +59,58 @@ function load<T>(key: string, fallback: T): T {
   }
 }
 
-/** 정산 메일에서 온 실제 금액을 예약에 매칭 — 체크인 날짜(+숙소 이름) 기준 */
+/**
+ * 정산 메일에서 온 실제 금액을 예약에 매칭 — 체크인 날짜(+숙소 이름) 기준.
+ * 매칭되는 예약이 없는 정산 내역(과거 백필 등)은 독립 예약으로 추가해 매출 차트에 잡히게 한다.
+ */
 function applyActuals(bookings: Booking[], actuals: ActualPayout[], listings: Listing[]): Booking[] {
   if (!actuals.length) return bookings
   const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase()
-  return bookings.map((b) => {
+  const matchListing = (a: ActualPayout): Listing | undefined => {
+    if (a.listingName) {
+      const found = listings.find(
+        (l) =>
+          norm(a.listingName as string).includes(norm(l.name).slice(0, 10)) ||
+          norm(l.name).includes(norm(a.listingName as string).slice(0, 10)),
+      )
+      if (found) return found
+    }
+    return listings[0]
+  }
+
+  const usedActualIds = new Set<string>()
+  const merged = bookings.map((b) => {
     const match = actuals.find((a) => {
-      if (!a.checkIn || a.checkIn !== b.checkIn) return false
+      if (usedActualIds.has(a.id) || !a.checkIn || a.checkIn !== b.checkIn) return false
       if (!a.listingName || listings.length <= 1) return true
       const listing = listings.find((l) => l.id === b.listingId)
       return listing ? norm(a.listingName).includes(norm(listing.name).slice(0, 10)) ||
         norm(listing.name).includes(norm(a.listingName).slice(0, 10)) : true
     })
-    return match ? { ...b, totalPrice: match.amount, actual: true } : b
+    if (!match) return b
+    usedActualIds.add(match.id)
+    return { ...b, totalPrice: match.amount, actual: true }
   })
+
+  // 미매칭 정산 내역 → 독립 예약으로 추가 (과거 매출 백필)
+  for (const a of actuals) {
+    if (usedActualIds.has(a.id) || !a.checkIn) continue
+    const listing = matchListing(a)
+    if (!listing) continue
+    merged.push({
+      id: `actual-${a.id}`,
+      listingId: listing.id,
+      guestName: a.guestName ?? (a.channel === 'booking' ? 'Booking.com 게스트' : 'Airbnb 게스트'),
+      channel: a.channel ?? 'airbnb',
+      checkIn: a.checkIn,
+      nights: a.nights ?? 1, // 메일에서 박수를 못 얻으면 1박으로 집계 (매출 금액은 정확)
+      totalPrice: a.amount,
+      status: 'confirmed',
+      source: 'ical',
+      actual: true,
+    })
+  }
+  return merged
 }
 
 /** iCal 예약(가격 정보 없음)에 추천가 기반 추정 매출을 채운다 */
