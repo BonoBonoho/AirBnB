@@ -1,5 +1,6 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { getDoc, putDoc, syncUserBookings } from './shared'
+import { fetchAirbnbListing } from './airbnb-import'
 
 const json = (statusCode: number, body: unknown): APIGatewayProxyResultV2 => ({
   statusCode,
@@ -42,6 +43,17 @@ export async function handler(
     if (method === 'POST' && path === '/api/sync') {
       const bookings = await syncUserBookings(sub)
       return json(200, { bookings })
+    }
+
+    // 에어비앤비 숙소 링크에서 정보 불러오기 (best-effort)
+    if (method === 'POST' && path === '/api/import') {
+      const { url } = JSON.parse(event.body ?? '{}')
+      if (typeof url !== 'string') return json(400, { error: 'url이 필요합니다' })
+      try {
+        return json(200, await fetchAirbnbListing(url))
+      } catch (e) {
+        return json(422, { error: e instanceof Error ? e.message : '불러오기 실패' })
+      }
     }
 
     return json(404, { error: 'not found' })
