@@ -29,6 +29,23 @@ export interface Listing {
   photoUrl?: string
   /** 에어비앤비 room ID (링크로 불러온 경우) */
   airbnbRoomId?: string
+  /** 스마트 도어락 연결 설정 */
+  doorLock?: DoorLock
+}
+
+export interface DoorLock {
+  provider: 'mock' | 'tuya' | 'ttlock'
+  /** 도어락 기기 ID (실제 연동 시 사용, 목업은 비움) */
+  deviceId?: string
+}
+
+/** 게스트 문열기 기록 */
+export interface DoorLogEntry {
+  listingId: string
+  bookingId: string
+  guestName: string
+  at: string // ISO
+  result: 'success' | 'expired' | 'error'
 }
 
 export interface Booking {
