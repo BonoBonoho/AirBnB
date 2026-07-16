@@ -39,6 +39,20 @@ export interface DoorLock {
   deviceId?: string
 }
 
+/** 시장 스캔 결과 — 특정 체크인 날짜의 경쟁 숙소 가격 분포 */
+export interface MarketPoint {
+  date: string // 체크인 YYYY-MM-DD
+  count: number
+  p25: number
+  median: number
+  p75: number
+}
+
+export interface MarketData {
+  scannedAt: string
+  points: MarketPoint[]
+}
+
 /** 게스트 문열기 기록 */
 export interface DoorLogEntry {
   listingId: string
