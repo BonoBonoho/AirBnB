@@ -36,6 +36,45 @@ function decodeEntities(s: string): string {
     .replace(/&nbsp;/g, ' ')
 }
 
+/** "제목 - 지역의 집 전체 임대 - 에어비앤비" 꼬리표만 제거. 제목 안의 '-'는 보존한다. */
+function cleanTitle(ogTitle: string): string | null {
+  let t = ogTitle.trim()
+  t = t.replace(/\s+[-–]\s+[^-–]+\s+[-–]\s+(에어비앤비|Airbnb)\s*$/u, '')
+  t = t.replace(/\s+[-–]\s+(에어비앤비|Airbnb)\s*$/u, '')
+  return t || null
+}
+
+/** 페이지에 임베드된 JSON에서 제목 후보들을 수집 (og:title이 잘린 경우 대비) */
+function jsonTitleCandidates(html: string): string[] {
+  const out: string[] = []
+  const re = /"(?:title|name|listingTitle|seoTitle)"\s*:\s*"((?:[^"\\]|\\.){5,300})"/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(html)) !== null && out.length < 100) {
+    try {
+      out.push(JSON.parse(`"${m[1]}"`) as string)
+    } catch {
+      // 이스케이프가 깨진 후보는 무시
+    }
+  }
+  return out
+}
+
+/**
+ * og:title을 기본으로 쓰되, 말줄임(…)으로 잘렸거나 더 긴 원본이 임베드 JSON에 있으면
+ * 그쪽을 선택해 사용자가 지은 제목을 그대로 반환한다.
+ */
+function resolveFullTitle(ogTitle: string | null, html: string): string | null {
+  const cleaned = ogTitle ? cleanTitle(ogTitle) : null
+  if (!cleaned) return null
+  const prefix = cleaned.replace(/[…⋯.]+\s*$/u, '').slice(0, 15)
+  if (prefix.length < 5) return cleaned
+  const better = jsonTitleCandidates(html)
+    .map((c) => c.trim())
+    .filter((c) => c.startsWith(prefix) && c.length >= cleaned.replace(/[…⋯]+\s*$/u, '').length)
+    .sort((a, b) => b.length - a.length)[0]
+  return better ?? cleaned
+}
+
 function firstNumber(patterns: RegExp[], ...sources: (string | null)[]): number | null {
   for (const src of sources) {
     if (!src) continue
@@ -76,12 +115,11 @@ export async function fetchAirbnbListing(url: string): Promise<ImportedListing> 
   }
   if (!html) throw new Error('에어비앤비 페이지를 불러오지 못했습니다. 수동으로 입력해 주세요.')
 
-  const ogTitle = meta(html, 'og:title')
+  const ogTitle = meta(html, 'og:title') ?? meta(html, 'twitter:title')
   const ogDesc = meta(html, 'og:description')
   const ogImage = meta(html, 'og:image')
 
-  // "숙소 이름 - 지역의 아파트 임대 - 에어비앤비" 형태에서 이름만 추출
-  const name = ogTitle ? ogTitle.split(/\s+[-–]\s+/)[0].trim() || null : null
+  const name = resolveFullTitle(ogTitle, html)
 
   const bedrooms = firstNumber(
     [/침실\s*(\d+)/, /(\d+)\s*bedroom/i, /"bedrooms"\s*:\s*(\d+)/],
