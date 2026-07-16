@@ -19,6 +19,8 @@ interface Store {
   overrides: PriceOverride[]
   /** null = 데모(로컬) 모드, 아니면 AWS 클라우드 모드 */
   cloud: { email: string; signOut: () => void; syncNow: () => Promise<number> } | null
+  addListing: (listing: Listing) => void
+  deleteListing: (id: string) => void
   updateListing: (id: string, patch: Partial<Listing>) => void
   setOverride: (o: PriceOverride) => void
   removeOverride: (listingId: string, date: string) => void
@@ -77,12 +79,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     api
       .getState(config)
       .then((state) => {
-        if (state.listings && state.listings.length > 0) {
-          setListings(state.listings)
-        } else {
-          setListings(DEFAULT_LISTINGS)
-          api.putState(config, DEFAULT_LISTINGS, []).catch(console.error)
-        }
+        // 클라우드 모드는 실제 데이터만 사용 — 데모 숙소를 자동 생성하지 않는다
+        setListings(state.listings ?? [])
         setOverrides(state.overrides)
         setRemoteBookings(state.bookings)
         setRemoteLoaded(true)
@@ -132,6 +130,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             },
           }
         : null,
+      addListing: (listing) => setListings((prev) => [...prev, listing]),
+      deleteListing: (id) => {
+        setListings((prev) => prev.filter((l) => l.id !== id))
+        setOverrides((prev) => prev.filter((o) => o.listingId !== id))
+        setRemoteBookings((prev) => prev.filter((b) => b.listingId !== id))
+      },
       updateListing: (id, patch) =>
         setListings((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l))),
       setOverride: (o) =>

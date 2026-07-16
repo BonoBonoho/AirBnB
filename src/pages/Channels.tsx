@@ -29,7 +29,11 @@ export default function Channels() {
     <div>
       <PageTitle
         title="채널 연동"
-        desc="숙소별로 가격을 내보낼 판매 채널을 관리합니다 (MVP에서는 연동 상태 시뮬레이션)"
+        desc={
+          cloud
+            ? '에어비앤비 iCal 예약 동기화와 숙소별 판매 채널을 관리합니다'
+            : '숙소별로 가격을 내보낼 판매 채널을 관리합니다 (데모 모드)'
+        }
       />
 
       <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 px-5 py-4 text-sm text-blue-800">

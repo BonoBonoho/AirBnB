@@ -24,7 +24,14 @@ export default function Rules() {
   const listing = listings.find((l) => l.id === listingId) ?? listings[0]
   const [saved, setSaved] = useState(false)
 
-  if (!listing) return null
+  if (!listing) {
+    return (
+      <div>
+        <PageTitle title="가격 규칙" />
+        <Card>등록된 숙소가 없습니다. 숙소 관리에서 먼저 숙소를 등록하세요.</Card>
+      </div>
+    )
+  }
 
   const setRule = (key: keyof PricingRules, value: number) => {
     updateListing(listing.id, { rules: { ...listing.rules, [key]: value } })
