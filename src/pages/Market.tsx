@@ -46,11 +46,39 @@ export default function Market() {
     ]
   }, [market, myStats])
 
-  if (!listing || !market) {
+  if (!listing) {
     return (
       <div>
         <PageTitle title="시장 분석" />
-        <Card>활성화된 숙소가 없습니다.</Card>
+        <Card>활성화된 숙소가 없습니다. 숙소 관리에서 숙소를 등록·활성화하세요.</Card>
+      </div>
+    )
+  }
+
+  if (!market) {
+    return (
+      <div>
+        <PageTitle title="시장 분석" desc="지역 경쟁 숙소 대비 내 숙소의 가격·점유율 포지션" />
+        <select
+          value={listing.id}
+          onChange={(e) => setListingId(e.target.value)}
+          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm mb-4"
+        >
+          {activeListings.map((l) => (
+            <option key={l.id} value={l.id}>{l.thumbnail} {l.name} ({l.region})</option>
+          ))}
+        </select>
+        <div className="grid grid-cols-2 gap-4 mb-6 max-w-xl">
+          <StatCard label="내 평균 추천가 (30일)" value={formatKRW(myStats.avgPrice)} />
+          <StatCard label="내 점유율 (30일)" value={`${myStats.occupancy}%`} />
+        </div>
+        <Card>
+          <div className="font-semibold mb-1">📊 "{listing.region}" 지역 시장 데이터 준비 중</div>
+          <p className="text-sm text-slate-500">
+            이 지역의 경쟁 숙소 가격·점유율 데이터는 아직 수집되지 않았습니다.
+            시장 데이터 수집(경쟁 숙소 분석)은 로드맵에 있는 다음 단계 기능입니다.
+          </p>
+        </Card>
       </div>
     )
   }
