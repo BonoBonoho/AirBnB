@@ -14,11 +14,22 @@ import * as origins from 'aws-cdk-lib/aws-cloudfront-origins'
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment'
 import * as events from 'aws-cdk-lib/aws-events'
 import * as targets from 'aws-cdk-lib/aws-events-targets'
+import * as route53 from 'aws-cdk-lib/aws-route53'
+import * as route53Targets from 'aws-cdk-lib/aws-route53-targets'
+import type * as acm from 'aws-cdk-lib/aws-certificatemanager'
 import * as path from 'node:path'
 
+interface StayPriceStackProps extends StackProps {
+  /** 커스텀 도메인 (예: stayprice.com). certificate와 함께 지정 */
+  domainName?: string
+  /** us-east-1의 CloudFront용 ACM 인증서 */
+  certificate?: acm.Certificate
+}
+
 export class StayPriceStack extends Stack {
-  constructor(scope: Construct, id: string, props?: StackProps) {
+  constructor(scope: Construct, id: string, props?: StayPriceStackProps) {
     super(scope, id, props)
+    const { domainName, certificate } = props ?? {}
 
     // ── 데이터: DynamoDB 단일 테이블 (pk=USER#<sub>, sk=LISTINGS|OVERRIDES|BOOKINGS)
     const table = new dynamodb.Table(this, 'Table', {
@@ -109,7 +120,23 @@ export class StayPriceStack extends Stack {
         { httpStatus: 403, responseHttpStatus: 200, responsePagePath: '/index.html' },
         { httpStatus: 404, responseHttpStatus: 200, responsePagePath: '/index.html' },
       ],
+      ...(domainName && certificate
+        ? { domainNames: [domainName, `www.${domainName}`], certificate }
+        : {}),
     })
+
+    // 커스텀 도메인: Route 53 A/AAAA 레코드 → CloudFront (apex + www)
+    if (domainName && certificate) {
+      const zone = route53.HostedZone.fromLookup(this, 'Zone', { domainName })
+      const target = route53.RecordTarget.fromAlias(
+        new route53Targets.CloudFrontTarget(distribution),
+      )
+      new route53.ARecord(this, 'ApexA', { zone, target })
+      new route53.AaaaRecord(this, 'ApexAaaa', { zone, target })
+      new route53.ARecord(this, 'WwwA', { zone, recordName: 'www', target })
+      new route53.AaaaRecord(this, 'WwwAaaa', { zone, recordName: 'www', target })
+      new CfnOutput(this, 'CustomDomainUrl', { value: `https://${domainName}` })
+    }
 
     // 빌드된 SPA + 런타임 설정(config.json) 업로드
     new s3deploy.BucketDeployment(this, 'DeploySite', {
