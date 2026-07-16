@@ -8,6 +8,7 @@ const NAV = [
   { to: '/rules', label: '가격 규칙', icon: '⚙️' },
   { to: '/market', label: '시장 분석', icon: '📈' },
   { to: '/channels', label: '채널 연동', icon: '🔗' },
+  { to: '/door', label: '스마트도어', icon: '🚪' },
 ]
 
 export default function Layout() {
