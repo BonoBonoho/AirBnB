@@ -1,0 +1,74 @@
+name: Register Domain
+
+# 수동 실행 전용 — Route 53에서 도메인을 구매(등록)한다.
+# 필요한 시크릿:
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (배포용과 동일)
+#   DOMAIN_CONTACT_JSON — 등록자 연락처(JSON). README의 커스텀 도메인 섹션 참고.
+# 비용: 도메인 등록비(.co 약 $25/년)가 AWS 계정으로 청구된다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: '등록할 도메인'
+        required: true
+        default: 'stayprice.co'
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: us-east-1  # route53domains API는 us-east-1 전용
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check availability
+        run: |
+          STATUS=$(aws route53domains check-domain-availability \
+            --domain-name "${{ inputs.domain }}" --query Availability --output text)
+          echo "availability: $STATUS"
+          if [ "$STATUS" != "AVAILABLE" ]; then
+            echo "::error::도메인을 등록할 수 없습니다 (상태: $STATUS)"
+            exit 1
+          fi
+
+      - name: Register domain
+        run: |
+          if [ -z '${{ secrets.DOMAIN_CONTACT_JSON }}' ]; then
+            echo "::error::DOMAIN_CONTACT_JSON 시크릿이 없습니다"
+            exit 1
+          fi
+          cat > contact.json <<'CONTACT'
+          ${{ secrets.DOMAIN_CONTACT_JSON }}
+          CONTACT
+          OP=$(aws route53domains register-domain \
+            --domain-name "${{ inputs.domain }}" \
+            --duration-in-years 1 \
+            --auto-renew \
+            --admin-contact file://contact.json \
+            --registrant-contact file://contact.json \
+            --tech-contact file://contact.json \
+            --privacy-protect-admin-contact \
+            --privacy-protect-registrant-contact \
+            --privacy-protect-tech-contact \
+            --query OperationId --output text)
+          rm contact.json
+          echo "operation: $OP"
+          echo "OPERATION_ID=$OP" >> "$GITHUB_ENV"
+
+      - name: Wait for registration
+        run: |
+          for i in $(seq 1 60); do
+            STATUS=$(aws route53domains get-operation-detail \
+              --operation-id "$OPERATION_ID" --query Status --output text)
+            echo "[$i] status: $STATUS"
+            case "$STATUS" in
+              SUCCESSFUL) echo "✅ 등록 완료"; exit 0 ;;
+              ERROR|FAILED) 
+                aws route53domains get-operation-detail --operation-id "$OPERATION_ID"
+                exit 1 ;;
+            esac
+            sleep 30
+          done
+          echo "::warning::30분 내에 완료되지 않았습니다. Route 53 콘솔에서 진행 상태를 확인하세요."
