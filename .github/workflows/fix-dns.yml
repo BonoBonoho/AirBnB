@@ -1,0 +1,80 @@
+name: Fix DNS Delegation
+
+# stayprice.co 호스팅 영역이 중복 생성돼 위임(NS)과 레코드가 어긋난 경우 자동 수리:
+# 1) 레코드(A)가 실제로 들어있는 영역을 찾고
+# 2) 도메인 등록 정보의 네임서버를 그 영역의 NS로 변경
+# 3) 비어있는 중복 영역은 삭제
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: '도메인'
+        required: true
+        default: 'stayprice.co'
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: us-east-1
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Diagnose and repair
+        run: |
+          set -euo pipefail
+          DOMAIN="${{ inputs.domain }}"
+
+          echo "== 호스팅 영역 목록 =="
+          aws route53 list-hosted-zones-by-name --dns-name "$DOMAIN" \
+            --query "HostedZones[?Name=='$DOMAIN.'].{Id:Id,Records:ResourceRecordSetCount}" --output table
+
+          ZONE_IDS=$(aws route53 list-hosted-zones-by-name --dns-name "$DOMAIN" \
+            --query "HostedZones[?Name=='$DOMAIN.'].Id" --output text)
+
+          TARGET=""
+          EMPTY_ZONES=""
+          for Z in $ZONE_IDS; do
+            ZID="${Z##*/}"
+            HAS_A=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZID" \
+              --query "ResourceRecordSets[?Type=='A' && Name=='$DOMAIN.'] | length(@)" --output text)
+            COUNT=$(aws route53 get-hosted-zone --id "$ZID" --query "HostedZone.ResourceRecordSetCount" --output text)
+            echo "zone $ZID: A레코드=$HAS_A, 전체=$COUNT"
+            if [ "$HAS_A" != "0" ]; then
+              TARGET="$ZID"
+            elif [ "$COUNT" == "2" ]; then
+              EMPTY_ZONES="$EMPTY_ZONES $ZID"
+            fi
+          done
+
+          if [ -z "$TARGET" ]; then
+            echo "::error::A 레코드가 있는 영역을 찾지 못했습니다. 먼저 배포가 성공했는지 확인하세요."
+            exit 1
+          fi
+          echo "✅ 레코드 보유 영역: $TARGET"
+
+          echo "== 도메인 네임서버를 대상 영역으로 변경 =="
+          NS_ARGS=$(aws route53 get-hosted-zone --id "$TARGET" \
+            --query "DelegationSet.NameServers[]" --output text | sed 's/\S*/Name=&/g')
+          echo "새 NS: $NS_ARGS"
+          OP=$(aws route53domains update-domain-nameservers --domain-name "$DOMAIN" \
+            --nameservers $NS_ARGS --query OperationId --output text)
+          echo "operation: $OP"
+
+          for i in $(seq 1 30); do
+            STATUS=$(aws route53domains get-operation-detail --operation-id "$OP" --query Status --output text)
+            echo "[$i] NS 변경: $STATUS"
+            [ "$STATUS" == "SUCCESSFUL" ] && break
+            if [ "$STATUS" == "ERROR" ] || [ "$STATUS" == "FAILED" ]; then exit 1; fi
+            sleep 10
+          done
+
+          echo "== 빈 중복 영역 삭제 =="
+          for ZID in $EMPTY_ZONES; do
+            echo "deleting empty zone $ZID"
+            aws route53 delete-hosted-zone --id "$ZID"
+          done
+
+          echo "✅ 수리 완료. DNS 전파까지 몇 분 걸릴 수 있습니다."
