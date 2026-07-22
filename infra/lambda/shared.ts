@@ -10,7 +10,7 @@ export interface IcalBooking {
   id: string
   listingId: string
   guestName: string
-  channel: 'airbnb'
+  channel: 'airbnb' | 'booking'
   checkIn: string // YYYY-MM-DD
   nights: number
   totalPrice: number // iCal에는 금액이 없어 0 — 프론트에서 추천가로 추정
@@ -72,15 +72,16 @@ function toDateOnly(v: string): string | null {
 export async function fetchAndParseICal(
   listingId: string,
   icalUrl: string,
+  channel: 'airbnb' | 'booking',
 ): Promise<IcalBooking[]> {
   const res = await fetch(icalUrl, { signal: AbortSignal.timeout(15000) })
   if (!res.ok) throw new Error(`iCal fetch failed (${res.status}) for ${listingId}`)
   const text = await res.text()
   return parseICal(text).map((e) => ({
-    id: `ical-${listingId}-${e.uid}`,
+    id: `ical-${channel}-${listingId}-${e.uid}`,
     listingId,
     guestName: e.summary,
-    channel: 'airbnb' as const,
+    channel,
     checkIn: e.checkIn,
     nights: e.nights,
     totalPrice: 0,
@@ -92,23 +93,29 @@ export async function fetchAndParseICal(
 interface ListingLike {
   id: string
   icalUrl?: string
+  bookingIcalUrl?: string
 }
 
-/** 사용자의 모든 iCal 연동 숙소를 동기화하고 저장된 예약 목록을 반환 */
+/** 사용자의 모든 iCal 연동 숙소(에어비앤비 + 부킹닷컴)를 동기화하고 저장된 예약 목록을 반환 */
 export async function syncUserBookings(sub: string): Promise<IcalBooking[]> {
   const listings = (await getDoc<ListingLike[]>(sub, 'LISTINGS')) ?? []
-  const withIcal = listings.filter((l) => l.icalUrl)
+  const jobs = listings.flatMap((l) => [
+    ...(l.icalUrl ? [{ listingId: l.id, url: l.icalUrl, channel: 'airbnb' as const }] : []),
+    ...(l.bookingIcalUrl
+      ? [{ listingId: l.id, url: l.bookingIcalUrl, channel: 'booking' as const }]
+      : []),
+  ])
   const all: IcalBooking[] = []
   const errors: string[] = []
-  for (const l of withIcal) {
+  for (const job of jobs) {
     try {
-      all.push(...(await fetchAndParseICal(l.id, l.icalUrl as string)))
+      all.push(...(await fetchAndParseICal(job.listingId, job.url, job.channel)))
     } catch (e) {
       errors.push(String(e))
     }
   }
-  // 하나라도 성공했거나 연동 숙소가 없으면 저장 (전부 실패 시 기존 데이터 유지)
-  if (withIcal.length === 0 || all.length > 0 || errors.length < withIcal.length) {
+  // 하나라도 성공했거나 연동이 없으면 저장 (전부 실패 시 기존 데이터 유지)
+  if (jobs.length === 0 || all.length > 0 || errors.length < jobs.length) {
     await putDoc(sub, 'BOOKINGS', all)
   }
   if (errors.length) console.error('sync errors:', errors)
