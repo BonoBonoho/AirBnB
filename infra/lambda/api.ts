@@ -14,16 +14,67 @@ const json = (statusCode: number, body: unknown): APIGatewayProxyResultV2 => ({
 export async function handler(
   event: APIGatewayProxyEventV2WithJWTAuthorizer,
 ): Promise<APIGatewayProxyResultV2> {
-  const sub = event.requestContext.authorizer?.jwt?.claims?.sub as string | undefined
-  if (!sub) return json(401, { error: 'unauthorized' })
-
   const method = event.requestContext.http.method
   const path = event.rawPath
+
+  // ── 공개 라우트 (게스트 설문 — 로그인 불필요, 토큰이 인증 역할)
+  if (path.startsWith('/public/form/')) {
+    const token = decodeURIComponent(path.split('/public/form/')[1] ?? '')
+    if (!/^[a-z0-9]{8,32}$/.test(token)) return json(404, { error: 'not found' })
+    try {
+      const link = await getDoc<{
+        sub: string; bookingId: string; guestName: string; listingName: string
+        checkIn: string; nights: number
+      }>(`FORMLINK:${token}`, 'MAP')
+      if (!link) return json(404, { error: '유효하지 않은 링크입니다' })
+
+      if (method === 'GET') {
+        const [questions, responses] = await Promise.all([
+          getDoc(link.sub, 'FORMQUESTIONS'),
+          getDoc<Record<string, unknown>>(link.sub, 'FORMRESP'),
+        ])
+        return json(200, {
+          questions, // null이면 프론트가 기본 템플릿 사용
+          meta: {
+            guestName: link.guestName, listingName: link.listingName,
+            checkIn: link.checkIn, nights: link.nights,
+          },
+          submitted: !!responses?.[link.bookingId],
+        })
+      }
+
+      if (method === 'POST') {
+        const body = JSON.parse(event.body ?? '{}')
+        if (!body.answers || typeof body.answers !== 'object') {
+          return json(400, { error: 'answers가 필요합니다' })
+        }
+        const answers: Record<string, string> = {}
+        for (const [k, v] of Object.entries(body.answers as Record<string, unknown>).slice(0, 60)) {
+          answers[String(k).slice(0, 60)] = String(v).slice(0, 2000)
+        }
+        const responses = (await getDoc<Record<string, unknown>>(link.sub, 'FORMRESP')) ?? {}
+        responses[link.bookingId] = {
+          submittedAt: new Date().toISOString(),
+          guestName: String(body.guestName ?? link.guestName).slice(0, 100),
+          answers,
+        }
+        await putDoc(link.sub, 'FORMRESP', responses)
+        return json(200, { ok: true })
+      }
+    } catch (e) {
+      console.error(e)
+      return json(500, { error: 'internal error' })
+    }
+    return json(404, { error: 'not found' })
+  }
+
+  const sub = event.requestContext.authorizer?.jwt?.claims?.sub as string | undefined
+  if (!sub) return json(401, { error: 'unauthorized' })
 
   try {
     // 전체 상태 조회 (숙소 + 수동가격 + iCal 예약 + 실매출 + 메일수신 설정 + 시장 데이터)
     if (method === 'GET' && path === '/api/state') {
-      const [listings, overrides, bookings, actuals, settings, verification, market] =
+      const [listings, overrides, bookings, actuals, settings, verification, market, formQuestions, formResponses, formLinks] =
         await Promise.all([
           getDoc(sub, 'LISTINGS'),
           getDoc(sub, 'OVERRIDES'),
@@ -32,6 +83,9 @@ export async function handler(
           getDoc<{ inboundKey?: string }>(sub, 'SETTINGS'),
           getDoc(sub, 'VERIFICATION'),
           getDoc(sub, 'MARKET'),
+          getDoc(sub, 'FORMQUESTIONS'),
+          getDoc(sub, 'FORMRESP'),
+          getDoc(sub, 'FORMLINKS'),
         ])
       return json(200, {
         listings,
@@ -41,7 +95,42 @@ export async function handler(
         inboundKey: settings?.inboundKey ?? null,
         verification: verification ?? null,
         market: market ?? {},
+        formQuestions,
+        formResponses: formResponses ?? {},
+        formLinks: formLinks ?? {},
       })
+    }
+
+    // 게스트 설문 질문 저장
+    if (method === 'PUT' && path === '/api/form-questions') {
+      const { questions } = JSON.parse(event.body ?? '{}')
+      if (!Array.isArray(questions)) return json(400, { error: 'questions 배열이 필요합니다' })
+      await putDoc(sub, 'FORMQUESTIONS', questions.slice(0, 60))
+      return json(200, { ok: true })
+    }
+
+    // 예약별 설문 링크 발급 (이미 있으면 재사용)
+    if (method === 'POST' && path === '/api/form-link') {
+      const { bookingId, guestName, listingName, checkIn, nights } = JSON.parse(event.body ?? '{}')
+      if (!bookingId) return json(400, { error: 'bookingId가 필요합니다' })
+      const links = (await getDoc<Record<string, string>>(sub, 'FORMLINKS')) ?? {}
+      let token = links[String(bookingId)]
+      if (!token) {
+        token = randomBytes(8).toString('hex')
+        links[String(bookingId)] = token
+        await Promise.all([
+          putDoc(sub, 'FORMLINKS', links),
+          putDoc(`FORMLINK:${token}`, 'MAP', {
+            sub,
+            bookingId: String(bookingId),
+            guestName: String(guestName ?? '게스트').slice(0, 100),
+            listingName: String(listingName ?? '').slice(0, 120),
+            checkIn: String(checkIn ?? ''),
+            nights: Number(nights) || 1,
+          }),
+        ])
+      }
+      return json(200, { token })
     }
 
     // 시장 스캔 — 지역·날짜 하나에 대한 경쟁 가격 분포 (저장은 클라이언트가 PUT /api/market으로)

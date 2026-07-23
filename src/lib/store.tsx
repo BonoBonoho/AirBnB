@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { Listing, Booking, PriceOverride, ActualPayout, MarketData } from '../types'
+import type { Listing, Booking, PriceOverride, ActualPayout, MarketData, FormQuestion, FormResponse } from '../types'
 import { DEFAULT_LISTINGS, generateBookings, bookedDateSet } from '../data/mock'
 import { computeDayPrice } from './pricing'
 import { addDays } from './date'
@@ -33,6 +33,12 @@ interface Store {
     verification: VerificationMail | null
     /** 지역별 실제 시장 스캔 데이터 */
     market: Record<string, MarketData>
+    /** 게스트 설문: 질문(null=기본 템플릿), 예약별 응답, 예약별 링크 토큰 */
+    formQuestions: FormQuestion[] | null
+    formResponses: Record<string, FormResponse>
+    formLinks: Record<string, string>
+    saveFormQuestions: (questions: FormQuestion[]) => Promise<void>
+    createFormLink: (b: { bookingId: string; guestName: string; listingName: string; checkIn: string; nights: number }) => Promise<string>
     marketScan: (
       region: string, checkin: string, checkout: string,
     ) => Promise<{
@@ -141,6 +147,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [inboundKey, setInboundKey] = useState<string | null>(null)
   const [verification, setVerification] = useState<VerificationMail | null>(null)
   const [market, setMarket] = useState<Record<string, MarketData>>({})
+  const [formQuestions, setFormQuestions] = useState<FormQuestion[] | null>(null)
+  const [formResponses, setFormResponses] = useState<Record<string, FormResponse>>({})
+  const [formLinks, setFormLinks] = useState<Record<string, string>>({})
 
   // 1) 설정 로드 → 클라우드/데모 모드 결정
   useEffect(() => {
@@ -167,6 +176,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setInboundKey(state.inboundKey)
         setVerification(state.verification)
         setMarket(state.market ?? {})
+        setFormQuestions(state.formQuestions)
+        setFormResponses(state.formResponses ?? {})
+        setFormLinks(state.formLinks ?? {})
         setRemoteLoaded(true)
       })
       .catch(console.error)
@@ -225,6 +237,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             actuals,
             verification,
             market,
+            formQuestions,
+            formResponses,
+            formLinks,
+            saveFormQuestions: async (questions: FormQuestion[]) => {
+              await api.putFormQuestions(config, questions)
+              setFormQuestions(questions)
+            },
+            createFormLink: async (b) => {
+              const res = await api.createFormLink(config, b)
+              setFormLinks((prev) => ({ ...prev, [b.bookingId]: res.token }))
+              return res.token
+            },
             marketScan: (region: string, checkin: string, checkout: string) =>
               api.marketScan(config, region, checkin, checkout),
             saveMarket: async (region: string, data: MarketData) => {
@@ -253,7 +277,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setOverrides([])
       },
     }),
-    [listings, bookings, overrides, config, inboundKey, actuals, verification, market],
+    [listings, bookings, overrides, config, inboundKey, actuals, verification, market, formQuestions, formResponses, formLinks],
   )
 
   if (config === undefined) {

@@ -1,4 +1,4 @@
-import type { Listing, Booking, PriceOverride, ActualPayout, MarketData } from '../types'
+import type { Listing, Booking, PriceOverride, ActualPayout, MarketData, FormQuestion, FormResponse } from '../types'
 import type { AppConfig } from './config'
 import { getIdToken } from './auth'
 
@@ -16,6 +16,33 @@ export interface RemoteState {
   inboundKey: string | null
   verification: VerificationMail | null
   market: Record<string, MarketData>
+  formQuestions: FormQuestion[] | null
+  formResponses: Record<string, FormResponse>
+  formLinks: Record<string, string>
+}
+
+export interface PublicFormData {
+  questions: FormQuestion[] | null
+  meta: { guestName: string; listingName: string; checkIn: string; nights: number }
+  submitted: boolean
+}
+
+/** 공개 설문 API — 로그인 불필요 (게스트용) */
+export const publicApi = {
+  getForm: async (apiUrl: string, token: string): Promise<PublicFormData> => {
+    const res = await fetch(`${apiUrl}/public/form/${encodeURIComponent(token)}`)
+    if (!res.ok) throw new Error(res.status === 404 ? '유효하지 않은 링크입니다' : `오류 (${res.status})`)
+    return res.json() as Promise<PublicFormData>
+  },
+  submitForm: async (apiUrl: string, token: string, guestName: string, answers: Record<string, string>) => {
+    const res = await fetch(`${apiUrl}/public/form/${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ guestName, answers }),
+    })
+    if (!res.ok) throw new Error(`제출 실패 (${res.status})`)
+    return res.json() as Promise<{ ok: boolean }>
+  },
 }
 
 async function request<T>(cfg: AppConfig, method: string, path: string, body?: unknown): Promise<T> {
@@ -67,4 +94,10 @@ export const api = {
     }>(cfg, 'POST', '/api/market-scan', { region, checkin, checkout }),
   putMarket: (cfg: AppConfig, region: string, data: MarketData) =>
     request<{ ok: boolean }>(cfg, 'PUT', '/api/market', { region, data }),
+  putFormQuestions: (cfg: AppConfig, questions: FormQuestion[]) =>
+    request<{ ok: boolean }>(cfg, 'PUT', '/api/form-questions', { questions }),
+  createFormLink: (
+    cfg: AppConfig,
+    payload: { bookingId: string; guestName: string; listingName: string; checkIn: string; nights: number },
+  ) => request<{ token: string }>(cfg, 'POST', '/api/form-link', payload),
 }

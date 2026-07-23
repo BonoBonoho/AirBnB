@@ -9,6 +9,7 @@ const NAV = [
   { to: '/market', label: '시장 분석', icon: '📈' },
   { to: '/channels', label: '채널 연동', icon: '🔗' },
   { to: '/door', label: '스마트도어', icon: '🚪' },
+  { to: '/guestform', label: '게스트 설문', icon: '📋' },
 ]
 
 export default function Layout() {
