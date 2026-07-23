@@ -90,6 +90,12 @@ export class StayPriceStack extends Stack {
       integration: new HttpLambdaIntegration('ApiIntegration', apiFn),
       authorizer,
     })
+    // 게스트 설문 등 공개 엔드포인트 — 무작위 토큰이 인증 역할 (JWT 없음)
+    httpApi.addRoutes({
+      path: '/public/{proxy+}',
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+      integration: new HttpLambdaIntegration('PublicIntegration', apiFn),
+    })
 
     // ── iCal 자동 동기화: 6시간마다 전체 사용자 예약 갱신
     const syncFn = new NodejsFunction(this, 'SyncFn', {

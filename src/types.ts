@@ -58,6 +58,23 @@ export interface MarketData {
   competitors?: { id: string; name?: string }[]
 }
 
+/** 게스트 사전 설문 질문 */
+export interface FormQuestion {
+  id: string
+  label: string
+  description?: string
+  type: 'text' | 'longtext' | 'number' | 'select' | 'multiselect'
+  options?: string[]
+  required?: boolean
+}
+
+/** 게스트 설문 응답 (질문 id → 답변, 다중 선택은 ', ' 연결) */
+export interface FormResponse {
+  submittedAt: string
+  guestName: string
+  answers: Record<string, string>
+}
+
 /** 게스트 문열기 기록 */
 export interface DoorLogEntry {
   listingId: string
