@@ -146,9 +146,19 @@ export class StayPriceStack extends Stack {
       new CfnOutput(this, 'CustomDomainUrl', { value: `https://${domainName}` })
     }
 
+    // Lambda가 미니홈 정적 페이지를 사이트 버킷에 발행할 수 있게 권한·환경 부여
+    siteBucket.grantReadWrite(apiFn)
+    apiFn.addEnvironment('SITE_BUCKET', siteBucket.bucketName)
+    apiFn.addEnvironment(
+      'PUBLIC_ORIGIN',
+      domainName ? `https://${domainName}` : `https://${distribution.distributionDomainName}`,
+    )
+
     // 빌드된 SPA + 런타임 설정(config.json) 업로드
+    // prune:false — Lambda가 발행한 미니홈(s/*)과 sitemap.xml이 배포 때 삭제되지 않게 유지
     new s3deploy.BucketDeployment(this, 'DeploySite', {
       destinationBucket: siteBucket,
+      prune: false,
       distribution, // 배포 시 CloudFront 캐시 무효화
       sources: [
         s3deploy.Source.asset(path.join(__dirname, '../../dist')),

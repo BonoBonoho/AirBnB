@@ -1,9 +1,15 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { randomBytes } from 'node:crypto'
 import { PutCommand } from '@aws-sdk/lib-dynamodb'
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import { ddb, TABLE_NAME, getDoc, putDoc, syncUserBookings } from './shared'
 import { fetchAirbnbListing } from './airbnb-import'
 import { scanMarket } from './market-scan'
+import { renderListingPage, renderSitemap } from './public-page'
+
+const s3 = new S3Client({})
+const SITE_BUCKET = process.env.SITE_BUCKET
+const PUBLIC_ORIGIN = process.env.PUBLIC_ORIGIN ?? ''
 
 const json = (statusCode: number, body: unknown): APIGatewayProxyResultV2 => ({
   statusCode,
@@ -68,13 +74,65 @@ export async function handler(
     return json(404, { error: 'not found' })
   }
 
+  // ── 공개 라우트: 미니홈 가용성 조회 / 예약 문의 접수
+  if (path.startsWith('/public/avail/') || path.startsWith('/public/inquiry/')) {
+    const slug = decodeURIComponent(path.split('/').pop() ?? '')
+    if (!/^[a-z0-9-]{3,40}$/.test(slug)) return json(404, { error: 'not found' })
+    try {
+      const map = await getDoc<{ sub: string; listingId: string }>(`SLUG:${slug}`, 'MAP')
+      if (!map) return json(404, { error: '페이지를 찾을 수 없습니다' })
+
+      if (method === 'GET' && path.startsWith('/public/avail/')) {
+        const bookings =
+          (await getDoc<{ listingId: string; checkIn: string; nights: number; status: string }[]>(
+            map.sub, 'BOOKINGS',
+          )) ?? []
+        const booked: string[] = []
+        for (const b of bookings) {
+          if (b.listingId !== map.listingId || b.status === 'cancelled') continue
+          const [y, mo, d] = b.checkIn.split('-').map(Number)
+          for (let i = 0; i < b.nights; i++) {
+            const dt = new Date(y, mo - 1, d + i)
+            booked.push(
+              `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`,
+            )
+          }
+        }
+        return json(200, { booked })
+      }
+
+      if (method === 'POST' && path.startsWith('/public/inquiry/')) {
+        const body = JSON.parse(event.body ?? '{}')
+        if (!body.name || !body.contact) return json(400, { error: '성함과 연락처가 필요합니다' })
+        const inquiries =
+          (await getDoc<unknown[]>(map.sub, 'INQUIRIES')) ?? []
+        inquiries.unshift({
+          id: randomBytes(6).toString('hex'),
+          slug,
+          listingId: map.listingId,
+          name: String(body.name).slice(0, 50),
+          contact: String(body.contact).slice(0, 80),
+          dates: String(body.dates ?? '').slice(0, 80),
+          message: String(body.message ?? '').slice(0, 1000),
+          at: new Date().toISOString(),
+        })
+        await putDoc(map.sub, 'INQUIRIES', inquiries.slice(0, 200))
+        return json(200, { ok: true })
+      }
+    } catch (e) {
+      console.error(e)
+      return json(500, { error: 'internal error' })
+    }
+    return json(404, { error: 'not found' })
+  }
+
   const sub = event.requestContext.authorizer?.jwt?.claims?.sub as string | undefined
   if (!sub) return json(401, { error: 'unauthorized' })
 
   try {
     // 전체 상태 조회 (숙소 + 수동가격 + iCal 예약 + 실매출 + 메일수신 설정 + 시장 데이터)
     if (method === 'GET' && path === '/api/state') {
-      const [listings, overrides, bookings, actuals, settings, verification, market, formQuestions, formResponses, formLinks] =
+      const [listings, overrides, bookings, actuals, settings, verification, market, formQuestions, formResponses, formLinks, inquiries] =
         await Promise.all([
           getDoc(sub, 'LISTINGS'),
           getDoc(sub, 'OVERRIDES'),
@@ -86,6 +144,7 @@ export async function handler(
           getDoc(sub, 'FORMQUESTIONS'),
           getDoc(sub, 'FORMRESP'),
           getDoc(sub, 'FORMLINKS'),
+          getDoc(sub, 'INQUIRIES'),
         ])
       return json(200, {
         listings,
@@ -98,7 +157,62 @@ export async function handler(
         formQuestions,
         formResponses: formResponses ?? {},
         formLinks: formLinks ?? {},
+        inquiries: inquiries ?? [],
       })
+    }
+
+    // 미니홈 발행 — 정적 HTML을 사이트 버킷에 생성 (네이버/구글 봇 인덱싱 가능)
+    if (method === 'POST' && path === '/api/publish-page') {
+      if (!SITE_BUCKET) return json(500, { error: '사이트 버킷이 설정되지 않았습니다' })
+      const { listingId, slug, page } = JSON.parse(event.body ?? '{}')
+      if (!listingId || !slug || !page) return json(400, { error: 'listingId/slug/page 필요' })
+      if (!/^[a-z0-9-]{3,40}$/.test(String(slug))) {
+        return json(400, { error: '주소는 영문 소문자·숫자·하이픈 3~40자입니다' })
+      }
+      const existing = await getDoc<{ sub: string; listingId: string }>(`SLUG:${slug}`, 'MAP')
+      if (existing && (existing.sub !== sub || existing.listingId !== String(listingId))) {
+        return json(409, { error: '이미 사용 중인 주소입니다. 다른 주소를 선택하세요.' })
+      }
+
+      const html = renderListingPage({
+        slug: String(slug),
+        name: String(page.name ?? '').slice(0, 120),
+        region: String(page.region ?? '').slice(0, 60),
+        type: String(page.type ?? '').slice(0, 40),
+        bedrooms: Number(page.bedrooms) || 0,
+        maxGuests: Number(page.maxGuests) || 0,
+        description: String(page.description ?? '').slice(0, 3000),
+        photoUrl: page.photoUrl ? String(page.photoUrl).slice(0, 500) : undefined,
+        kakaoUrl: page.kakaoUrl ? String(page.kakaoUrl).slice(0, 300) : undefined,
+        phone: page.phone ? String(page.phone).slice(0, 30) : undefined,
+        airbnbUrl: page.airbnbUrl ? String(page.airbnbUrl).slice(0, 300) : undefined,
+        minPriceText: page.minPriceText ? String(page.minPriceText).slice(0, 60) : undefined,
+        apiUrl: `https://${event.requestContext.domainName}`,
+        origin: PUBLIC_ORIGIN,
+      })
+
+      const slugs = (await getDoc<string[]>('GLOBAL', 'SLUGS')) ?? []
+      if (!slugs.includes(String(slug))) slugs.push(String(slug))
+
+      await Promise.all([
+        putDoc(`SLUG:${slug}`, 'MAP', { sub, listingId: String(listingId) }),
+        putDoc('GLOBAL', 'SLUGS', slugs),
+        s3.send(new PutObjectCommand({
+          Bucket: SITE_BUCKET,
+          Key: `s/${slug}`,
+          Body: html,
+          ContentType: 'text/html; charset=utf-8',
+          CacheControl: 'public, max-age=300',
+        })),
+        s3.send(new PutObjectCommand({
+          Bucket: SITE_BUCKET,
+          Key: 'sitemap.xml',
+          Body: renderSitemap(PUBLIC_ORIGIN, slugs),
+          ContentType: 'application/xml',
+          CacheControl: 'public, max-age=3600',
+        })),
+      ])
+      return json(200, { url: `${PUBLIC_ORIGIN}/s/${slug}` })
     }
 
     // 게스트 설문 질문 저장

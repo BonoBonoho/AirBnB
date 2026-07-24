@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { Listing, Booking, PriceOverride, ActualPayout, MarketData, FormQuestion, FormResponse } from '../types'
+import type { Listing, Booking, PriceOverride, ActualPayout, MarketData, FormQuestion, FormResponse, Inquiry } from '../types'
 import { DEFAULT_LISTINGS, generateBookings, bookedDateSet } from '../data/mock'
 import { computeDayPrice } from './pricing'
 import { addDays } from './date'
@@ -37,6 +37,9 @@ interface Store {
     formQuestions: FormQuestion[] | null
     formResponses: Record<string, FormResponse>
     formLinks: Record<string, string>
+    /** 미니홈 문의함 + 발행 */
+    inquiries: Inquiry[]
+    publishPage: (payload: Parameters<typeof api.publishPage>[1]) => Promise<string>
     saveFormQuestions: (questions: FormQuestion[]) => Promise<void>
     createFormLink: (b: { bookingId: string; guestName: string; listingName: string; checkIn: string; nights: number }) => Promise<string>
     marketScan: (
@@ -150,6 +153,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [formQuestions, setFormQuestions] = useState<FormQuestion[] | null>(null)
   const [formResponses, setFormResponses] = useState<Record<string, FormResponse>>({})
   const [formLinks, setFormLinks] = useState<Record<string, string>>({})
+  const [inquiries, setInquiries] = useState<Inquiry[]>([])
 
   // 1) 설정 로드 → 클라우드/데모 모드 결정
   useEffect(() => {
@@ -179,6 +183,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setFormQuestions(state.formQuestions)
         setFormResponses(state.formResponses ?? {})
         setFormLinks(state.formLinks ?? {})
+        setInquiries(state.inquiries ?? [])
         setRemoteLoaded(true)
       })
       .catch(console.error)
@@ -240,6 +245,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             formQuestions,
             formResponses,
             formLinks,
+            inquiries,
+            publishPage: async (payload) => {
+              const res = await api.publishPage(config, payload)
+              return res.url
+            },
             saveFormQuestions: async (questions: FormQuestion[]) => {
               await api.putFormQuestions(config, questions)
               setFormQuestions(questions)
@@ -277,7 +287,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setOverrides([])
       },
     }),
-    [listings, bookings, overrides, config, inboundKey, actuals, verification, market, formQuestions, formResponses, formLinks],
+    [listings, bookings, overrides, config, inboundKey, actuals, verification, market, formQuestions, formResponses, formLinks, inquiries],
   )
 
   if (config === undefined) {
