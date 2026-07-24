@@ -1,4 +1,4 @@
-import type { Listing, Booking, PriceOverride, ActualPayout, MarketData, FormQuestion, FormResponse } from '../types'
+import type { Listing, Booking, PriceOverride, ActualPayout, MarketData, FormQuestion, FormResponse, Inquiry } from '../types'
 import type { AppConfig } from './config'
 import { getIdToken } from './auth'
 
@@ -19,6 +19,7 @@ export interface RemoteState {
   formQuestions: FormQuestion[] | null
   formResponses: Record<string, FormResponse>
   formLinks: Record<string, string>
+  inquiries: Inquiry[]
 }
 
 export interface PublicFormData {
@@ -100,4 +101,16 @@ export const api = {
     cfg: AppConfig,
     payload: { bookingId: string; guestName: string; listingName: string; checkIn: string; nights: number },
   ) => request<{ token: string }>(cfg, 'POST', '/api/form-link', payload),
+  publishPage: (
+    cfg: AppConfig,
+    payload: {
+      listingId: string
+      slug: string
+      page: {
+        name: string; region: string; type: string; bedrooms: number; maxGuests: number
+        description: string; photoUrl?: string; kakaoUrl?: string; phone?: string
+        airbnbUrl?: string; minPriceText?: string
+      }
+    },
+  ) => request<{ url: string }>(cfg, 'POST', '/api/publish-page', payload),
 }

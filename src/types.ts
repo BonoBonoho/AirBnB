@@ -33,6 +33,30 @@ export interface Listing {
   airbnbRoomId?: string
   /** 스마트 도어락 연결 설정 */
   doorLock?: DoorLock
+  /** 미니홈(공개 페이지) 설정 */
+  publicPage?: PublicPageConfig
+}
+
+export interface PublicPageConfig {
+  slug: string
+  description: string
+  kakaoUrl?: string
+  phone?: string
+  airbnbUrl?: string
+  minPriceText?: string
+  publishedAt?: string
+}
+
+/** 미니홈으로 들어온 예약 문의 */
+export interface Inquiry {
+  id: string
+  slug: string
+  listingId: string
+  name: string
+  contact: string
+  dates: string
+  message: string
+  at: string
 }
 
 export interface DoorLock {
