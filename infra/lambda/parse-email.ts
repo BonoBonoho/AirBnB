@@ -96,7 +96,16 @@ export function parseAirbnbEmail(
     cleanSubject.match(/(?:예약\s*확정|예약)[^-–:]*[-–:]\s*(.+?)\s*님/)?.[1] ??
     cleanSubject.match(/(.+?)\s*님의\s*(?:새로운\s*)?예약/)?.[1] ??
     null
-  const listingName = src.match(/숙소[:\s]+([^\n]{2,80})/)?.[1]?.trim() ?? null
+  // 숙소명: "숙소: XXX" 형태(콜론 필수)만 인정 — "숙소 이용규칙을 업데이트…" 같은 안내문 오인 방지.
+  // 없으면 해시태그가 포함된 제목형 줄을 숙소명으로 추정 (에어비앤비 확정 메일 본문에 제목이 들어감)
+  const rawListingName =
+    src.match(/숙소\s*[:：]\s*([^\n]{2,80})/)?.[1]?.trim() ??
+    plain.match(/^\s*([^\n#]{2,60}#[^\n]{2,80})\s*$/m)?.[1]?.trim() ??
+    null
+  const listingName =
+    rawListingName && !/이용\s*규칙|업데이트|도착\s*정보|가이드|체크인\s*방법/.test(rawListingName)
+      ? rawListingName
+      : null
 
   return {
     id: code ?? `${checkIn ?? 'unknown'}:${amount}`,

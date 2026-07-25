@@ -102,8 +102,14 @@ function load<T>(key: string, fallback: T): T {
  * 정산 메일에서 온 실제 금액을 예약에 매칭 — 체크인 날짜(+숙소 이름) 기준.
  * 매칭되는 예약이 없는 정산 내역(과거 백필 등)은 독립 예약으로 추가해 매출 차트에 잡히게 한다.
  */
-function applyActuals(bookings: Booking[], actuals: ActualPayout[], listings: Listing[]): Booking[] {
-  if (!actuals.length) return bookings
+function applyActuals(bookings: Booking[], actualsRaw: ActualPayout[], listings: Listing[]): Booking[] {
+  if (!actualsRaw.length) return bookings
+  // 과거에 잘못 추출된 숙소명("이용규칙을 업데이트" 등 안내문)은 이름 없음으로 취급
+  const actuals = actualsRaw.map((a) =>
+    a.listingName && /이용\s*규칙|업데이트|도착\s*정보|가이드|체크인\s*방법/.test(a.listingName)
+      ? { ...a, listingName: null }
+      : a,
+  )
   const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase()
   const matchListing = (a: ActualPayout): Listing | undefined => {
     if (a.listingName) {
