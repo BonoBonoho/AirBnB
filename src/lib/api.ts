@@ -69,6 +69,30 @@ export interface SmartHomeState {
   available?: SmartDevice[]
 }
 
+/** 공동 호스트 권한 (조회는 팀원 모두, 수정은 켜진 항목만) */
+export interface CoPerms {
+  pricing?: boolean
+  channels?: boolean
+  smart?: boolean
+  guest?: boolean
+}
+export interface TeamMember {
+  email: string
+  perms: CoPerms
+  invitedAt?: string
+}
+export interface Workspace {
+  sub: string
+  ownerEmail: string
+  perms: CoPerms
+}
+
+/** 현재 선택된 워크스페이스 (null = 내 숙소). 요청마다 x-workspace 헤더로 전달 */
+let workspaceSub: string | null = null
+export function setApiWorkspace(sub: string | null) {
+  workspaceSub = sub
+}
+
 export interface PublicFormData {
   questions: FormQuestion[] | null
   meta: { guestName: string; listingName: string; checkIn: string; nights: number }
@@ -100,6 +124,7 @@ async function request<T>(cfg: AppConfig, method: string, path: string, body?: u
     method,
     headers: {
       Authorization: `Bearer ${token}`,
+      ...(workspaceSub ? { 'x-workspace': workspaceSub } : {}),
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -160,6 +185,12 @@ export const api = {
     request<{ ok: boolean }>(cfg, 'POST', '/api/smarthome/command', payload),
   smartHistory: (cfg: AppConfig) =>
     request<{ log: SmartLog }>(cfg, 'GET', '/api/smarthome/history'),
+  getTeam: (cfg: AppConfig) =>
+    request<{ members: TeamMember[] }>(cfg, 'GET', '/api/team'),
+  putTeam: (cfg: AppConfig, members: TeamMember[]) =>
+    request<{ ok: boolean }>(cfg, 'PUT', '/api/team', { members }),
+  getWorkspaces: (cfg: AppConfig) =>
+    request<{ workspaces: Workspace[] }>(cfg, 'GET', '/api/workspaces'),
   stOauthUrl: (cfg: AppConfig) =>
     request<{ url: string; redirectUri: string }>(cfg, 'POST', '/api/smarthome/st-oauth-url'),
   publishPage: (

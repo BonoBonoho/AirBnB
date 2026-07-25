@@ -15,6 +15,7 @@ import DoorGuest from './pages/DoorGuest'
 import FormAdmin from './pages/FormAdmin'
 import SiteAdmin from './pages/SiteAdmin'
 import SmartRoom from './pages/SmartRoom'
+import Team from './pages/Team'
 import GuestFormPage from './pages/GuestFormPage'
 
 const router = createHashRouter([
@@ -34,6 +35,7 @@ const router = createHashRouter([
       { path: '/guestform', element: <FormAdmin /> },
       { path: '/site', element: <SiteAdmin /> },
       { path: '/smartroom', element: <SmartRoom /> },
+      { path: '/team', element: <Team /> },
     ],
   },
 ])
