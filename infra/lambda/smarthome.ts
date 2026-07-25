@@ -326,6 +326,8 @@ export async function tuyaStatus(
   const find = (re: RegExp) => arr.find((s) => re.test(s.code))?.value
   const tempRaw = numOrU(find(/temp_current|va_temperature/))
   const sw = find(/^switch(_1)?$|switch_led/)
+  // 전력측정 플러그: cur_power/va_power는 0.1W 단위 (982 = 98.2W)
+  const powerRaw = numOrU(find(/^cur_power$|^va_power$/))
   return {
     deviceId,
     online: true,
@@ -333,6 +335,7 @@ export async function tuyaStatus(
     temperature: tempRaw !== undefined && Math.abs(tempRaw) > 60 ? tempRaw / 10 : tempRaw,
     humidity: numOrU(find(/humidity/)),
     switch: sw === true ? 'on' : sw === false ? 'off' : undefined,
+    power: powerRaw !== undefined ? powerRaw / 10 : undefined,
   }
 }
 
