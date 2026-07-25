@@ -57,23 +57,31 @@ export function parseAirbnbEmail(
 
   // 금액: 호스트가 실제로 받는 돈(호스트 수익/총 입금액/정산액)을 최우선으로,
   // 게스트 결제 총액(총 요금 등)은 후순위. 라벨이 없으면 본문 최대 금액.
-  const AMOUNT_PATTERNS = [
-    /호스트\s*수[익입][^\d₩]{0,80}(?:₩|KRW)\s*([\d,]+)/i,
-    /총\s*입금액[^\d₩]{0,80}(?:₩|KRW)\s*([\d,]+)/i,
-    /(?:정산|지급액?|payout)[^\d₩]{0,80}(?:₩|KRW)\s*([\d,]+)/i,
-    /(?:예상\s*수[익입]|총\s*수[익입])[^\d₩]{0,80}(?:₩|KRW)\s*([\d,]+)/i,
-    /(?:총\s*요금|총\s*금액|예약\s*금액|total\s*price|total\s*amount)[^\d₩]{0,80}(?:₩|KRW)\s*([\d,]+)/i,
+  // 금액 표기는 ₩/KRW 접두사와 "350,000원" 접미사 모두 지원 (부킹닷컴 한국어 메일 대응)
+  const AMOUNT_LABELS = [
+    '호스트\\s*수[익입]',
+    '총\\s*입금액',
+    '(?:정산|지급액?|payout)',
+    '(?:예상\\s*수[익입]|총\\s*수[익입])',
+    '(?:총\\s*요금|총\\s*금액|총\\s*결제\\s*금액|예약\\s*금액|total\\s*price|total\\s*amount)',
   ]
   let amount: number | null = null
-  for (const re of AMOUNT_PATTERNS) {
+  for (const label of AMOUNT_LABELS) {
+    const re = new RegExp(
+      `${label}[^\\d₩]{0,80}(?:(?:₩|KRW)\\s*([\\d,]+)|([\\d,]{4,12})\\s*원)`,
+      'i',
+    )
     const m = src.match(re)
     if (m) {
-      amount = Number(m[1].replace(/,/g, ''))
+      amount = Number((m[1] ?? m[2]).replace(/,/g, ''))
       break
     }
   }
   if (!amount) {
-    const all = [...src.matchAll(/(?:₩|KRW)\s*([\d,]{5,12})/gi)].map((m) => Number(m[1].replace(/,/g, '')))
+    const all = [
+      ...[...src.matchAll(/(?:₩|KRW)\s*([\d,]{5,12})/gi)].map((m) => Number(m[1].replace(/,/g, ''))),
+      ...[...src.matchAll(/([\d,]{6,12})\s*원/g)].map((m) => Number(m[1].replace(/,/g, ''))),
+    ]
     if (all.length) amount = Math.max(...all)
   }
   if (!amount || amount <= 0) return null
