@@ -20,6 +20,8 @@ interface BackfillEvent {
   provider: 'gmail' | 'naver'
   email: string
   appPassword: string
+  /** true면 체크포인트를 초기화하고 처음부터 다시 스캔 (파서 개선 재반영용) */
+  reset?: boolean
 }
 
 async function getDoc<T>(sub: string, sk: string): Promise<T | null> {
@@ -84,6 +86,7 @@ export async function handler(ev: BackfillEvent): Promise<void> {
       // 체크포인트: 이미 처리한 메일은 건너뛰어 재실행 시 이어서 진행 (최신 메일 우선)
       const stateKey = `${ev.provider}:${ev.email.toLowerCase()}`
       const state = (await getDoc<Record<string, number[]>>(ev.sub, 'BACKFILLSTATE')) ?? {}
+      if (ev.reset) state[stateKey] = []
       const done = new Set(state[stateKey] ?? [])
       const list = (uids ? uids.slice(-800) : []).filter((u) => !done.has(u)).reverse()
 

@@ -539,7 +539,7 @@ export async function handler(
     if (method === 'POST' && path === '/api/mail-backfill') {
       if (!can('channels')) return json(403, { error: '채널·매출 권한이 없습니다. 소유자에게 요청하세요.' })
       if (!BACKFILL_FN) return json(500, { error: '백필 기능이 아직 배포되지 않았습니다' })
-      const { provider, email, appPassword } = JSON.parse(event.body ?? '{}')
+      const { provider, email, appPassword, reset } = JSON.parse(event.body ?? '{}')
       if (provider !== 'gmail' && provider !== 'naver') return json(400, { error: 'provider는 gmail 또는 naver' })
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email ?? ''))) return json(400, { error: '올바른 이메일이 필요합니다' })
       const pw = String(appPassword ?? '').trim()
@@ -547,7 +547,7 @@ export async function handler(
       await lambdaClient.send(new InvokeCommand({
         FunctionName: BACKFILL_FN,
         InvocationType: 'Event',
-        Payload: Buffer.from(JSON.stringify({ sub, provider, email: String(email), appPassword: pw })),
+        Payload: Buffer.from(JSON.stringify({ sub, provider, email: String(email), appPassword: pw, reset: !!reset })),
       }))
       await putDoc(sub, 'VERIFICATION', {
         subject: '⏳ 과거 메일 백필 진행 중…',
