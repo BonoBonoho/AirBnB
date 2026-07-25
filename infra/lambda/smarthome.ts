@@ -30,6 +30,8 @@ export interface DeviceStatus {
   fanMode?: string
   /** 현재 소비전력 (W) — 지원 기기만 */
   power?: number
+  /** 누적 사용량 (kWh) — 전력측정 플러그 등 */
+  energy?: number
 }
 
 /** OAuth 토큰 묶음 — 액세스 토큰은 24시간, 리프레시 토큰으로 자동 갱신 */
@@ -223,7 +225,10 @@ export async function stStatus(token: string, deviceId: string): Promise<DeviceS
       ? main.airConditionerMode.airConditionerMode.value : undefined,
     fanMode: typeof main.airConditionerFanMode?.fanMode?.value === 'string'
       ? main.airConditionerFanMode.fanMode.value : undefined,
-    power: powerRaw && typeof powerRaw === 'object' ? numOrU(powerRaw.power) : undefined,
+    // 삼성 가전은 powerConsumptionReport, Matter 플러그(Tapo 등)는 powerMeter/energyMeter로 옴
+    power: (powerRaw && typeof powerRaw === 'object' ? numOrU(powerRaw.power) : undefined)
+      ?? numOrU(main.powerMeter?.power?.value),
+    energy: numOrU(main.energyMeter?.energy?.value),
   }
 }
 

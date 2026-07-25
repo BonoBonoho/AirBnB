@@ -47,6 +47,7 @@ export interface SmartDeviceStatus {
   acMode?: string
   fanMode?: string
   power?: number
+  energy?: number
 }
 
 /** 기기 사용 기록 — 일별 가동시간(분) + 최근 켬/끔 이벤트 */
