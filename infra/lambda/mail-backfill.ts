@@ -41,11 +41,13 @@ export async function handler(ev: BackfillEvent): Promise<void> {
     putDoc(ev.sub, 'VERIFICATION', { subject, snippet, receivedAt: new Date().toISOString() })
 
   const host = ev.provider === 'naver' ? 'imap.naver.com' : 'imap.gmail.com'
+  // 네이버 IMAP은 전체 메일주소가 아니라 아이디만 로그인 계정으로 받는다
+  const authUser = ev.provider === 'naver' ? ev.email.split('@')[0] : ev.email
   const client = new ImapFlow({
     host,
     port: 993,
     secure: true,
-    auth: { user: ev.email, pass: ev.appPassword },
+    auth: { user: authUser, pass: ev.appPassword },
     logger: false,
   })
 
