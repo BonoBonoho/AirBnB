@@ -6,6 +6,115 @@ import { Card, PageTitle, ChannelBadge } from '../components/ui'
 import type { Listing } from '../types'
 
 const EMOJIS = ['🏠', '🏙️', '🌊', '🏖️', '🌉', '🏡', '🛖', '⛰️', '🌆', '🏘️']
+const TYPES = ['아파트 전체', '오피스텔 전체', '독채 펜션', '단독주택', '개인실', '한옥']
+
+/** 등록된 숙소 인라인 수정 폼 */
+function EditListingForm({ listing, onDone }: { listing: Listing; onDone: () => void }) {
+  const { updateListing } = useStore()
+  const [f, setF] = useState({
+    name: listing.name,
+    region: listing.region,
+    type: listing.type,
+    bedrooms: listing.bedrooms,
+    maxGuests: listing.maxGuests,
+    thumbnail: listing.thumbnail,
+    basePrice: listing.rules.basePrice,
+    photoUrl: listing.photoUrl ?? '',
+    icalUrl: listing.icalUrl ?? '',
+    bookingIcalUrl: listing.bookingIcalUrl ?? '',
+  })
+
+  const save = () => {
+    if (!f.name.trim() || !f.region.trim() || f.basePrice <= 0) return
+    updateListing(listing.id, {
+      name: f.name.trim(),
+      region: f.region.trim(),
+      type: f.type,
+      bedrooms: f.bedrooms,
+      maxGuests: f.maxGuests,
+      thumbnail: f.thumbnail,
+      photoUrl: f.photoUrl.trim() || undefined,
+      icalUrl: f.icalUrl.trim() || undefined,
+      bookingIcalUrl: f.bookingIcalUrl.trim() || undefined,
+      rules: { ...listing.rules, basePrice: f.basePrice },
+    })
+    onDone()
+  }
+
+  const input = 'mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm'
+  return (
+    <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
+      <div className="grid sm:grid-cols-2 gap-3">
+        <div className="sm:col-span-2">
+          <label className="text-xs font-medium">숙소 이름 *</label>
+          <input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} className={input} />
+        </div>
+        <div>
+          <label className="text-xs font-medium">지역 *</label>
+          <input value={f.region} onChange={(e) => setF({ ...f, region: e.target.value })} className={input} />
+        </div>
+        <div>
+          <label className="text-xs font-medium">숙소 유형</label>
+          <select value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })} className={`${input} bg-white`}>
+            {TYPES.map((t) => <option key={t}>{t}</option>)}
+          </select>
+        </div>
+        <div className="flex gap-3">
+          <div className="flex-1">
+            <label className="text-xs font-medium">침실</label>
+            <input type="number" min={0} max={20} value={f.bedrooms}
+              onChange={(e) => setF({ ...f, bedrooms: Number(e.target.value) })} className={input} />
+          </div>
+          <div className="flex-1">
+            <label className="text-xs font-medium">최대 인원</label>
+            <input type="number" min={1} max={30} value={f.maxGuests}
+              onChange={(e) => setF({ ...f, maxGuests: Number(e.target.value) })} className={input} />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium">기본가 (평일 1박) *</label>
+          <input type="number" step={5000} min={0} value={f.basePrice}
+            onChange={(e) => setF({ ...f, basePrice: Number(e.target.value) })} className={input} />
+        </div>
+        <div className="sm:col-span-2">
+          <label className="text-xs font-medium">아이콘</label>
+          <div className="flex gap-1 mt-1 flex-wrap">
+            {EMOJIS.map((e) => (
+              <button key={e} onClick={() => setF({ ...f, thumbnail: e })}
+                className={`text-lg rounded-lg p-1 border ${f.thumbnail === e ? 'border-rose-400 bg-rose-50' : 'border-transparent hover:bg-white'}`}>
+                {e}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="sm:col-span-2">
+          <label className="text-xs font-medium">사진 URL</label>
+          <input type="url" value={f.photoUrl} onChange={(e) => setF({ ...f, photoUrl: e.target.value })}
+            placeholder="https://…" className={`${input} font-mono text-xs`} />
+        </div>
+        <div className="sm:col-span-2">
+          <label className="text-xs font-medium">📅 에어비앤비 iCal 주소</label>
+          <input type="url" value={f.icalUrl} onChange={(e) => setF({ ...f, icalUrl: e.target.value })}
+            placeholder="https://www.airbnb.co.kr/calendar/ical/…" className={`${input} font-mono text-xs`} />
+        </div>
+        <div className="sm:col-span-2">
+          <label className="text-xs font-medium">📅 부킹닷컴 iCal 주소</label>
+          <input type="url" value={f.bookingIcalUrl} onChange={(e) => setF({ ...f, bookingIcalUrl: e.target.value })}
+            placeholder="선택" className={`${input} font-mono text-xs`} />
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button onClick={save} disabled={!f.name.trim() || !f.region.trim() || f.basePrice <= 0}
+          className="rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-semibold hover:bg-indigo-700 disabled:opacity-40">
+          저장
+        </button>
+        <button onClick={onDone} className="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-white">
+          취소
+        </button>
+      </div>
+    </div>
+  )
+}
 
 const EMPTY_FORM = {
   name: '',
@@ -145,7 +254,7 @@ function AddListingForm({ onDone }: { onDone: () => void }) {
             onChange={(e) => setForm({ ...form, type: e.target.value })}
             className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
           >
-            {['아파트 전체', '오피스텔 전체', '독채 펜션', '단독주택', '개인실', '한옥'].map((t) => (
+            {TYPES.map((t) => (
               <option key={t}>{t}</option>
             ))}
           </select>
@@ -243,6 +352,7 @@ function AddListingForm({ onDone }: { onDone: () => void }) {
 export default function Listings() {
   const { listings, bookings, updateListing, deleteListing, resetAll, cloud } = useStore()
   const [adding, setAdding] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const today = todayStr()
 
   return (
@@ -323,6 +433,13 @@ export default function Listings() {
                     <div className="relative w-10 h-5.5 bg-slate-200 rounded-full peer-checked:bg-rose-500 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:after:translate-x-4.5" />
                   </label>
                   <button
+                    onClick={() => setEditingId(editingId === l.id ? null : l.id)}
+                    title="숙소 수정"
+                    className="text-slate-300 hover:text-indigo-600 text-sm px-1"
+                  >
+                    ✏️
+                  </button>
+                  <button
                     onClick={() => {
                       if (confirm(`"${l.name}" 숙소를 삭제할까요?\n수동 가격과 동기화된 예약 표시도 함께 제거됩니다.`))
                         deleteListing(l.id)
@@ -359,6 +476,10 @@ export default function Listings() {
                   <ChannelBadge key={c} name={CHANNEL_INFO[c].name} color={CHANNEL_INFO[c].color} />
                 ))}
               </div>
+
+              {editingId === l.id && (
+                <EditListingForm listing={l} onDone={() => setEditingId(null)} />
+              )}
             </Card>
           )
         })}
