@@ -111,15 +111,32 @@ function applyActuals(bookings: Booking[], actualsRaw: ActualPayout[], listings:
       : a,
   )
   const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase()
+  // [단체특가]·[오픈특가] 같은 프로모션 태그는 숙소 정체성이 아니므로 떼고 비교
+  const stripTags = (s: string) => norm(s).replace(/\[[^\]]{1,14}\]/g, '')
+  /** 이름 유사도: 공통 접두사 길이 (포함 관계면 짧은 쪽 전체) — 클수록 정확한 매칭 */
+  const matchScore = (mailName: string, listingName: string): number => {
+    const a = stripTags(mailName)
+    const b = stripTags(listingName)
+    if (!a || !b) return 0
+    let i = 0
+    while (i < a.length && i < b.length && a[i] === b[i]) i++
+    if (a.includes(b) || b.includes(a)) i = Math.max(i, Math.min(a.length, b.length))
+    return i
+  }
+  const MIN_SCORE = 6
   const matchListing = (a: ActualPayout): Listing | undefined => {
     if (a.listingName) {
-      const found = listings.find(
-        (l) =>
-          norm(a.listingName as string).includes(norm(l.name).slice(0, 10)) ||
-          norm(l.name).includes(norm(a.listingName as string).slice(0, 10)),
-      )
-      // 숙소명이 있는데 등록 숙소와 안 맞으면 첫 숙소에 몰아넣지 않고 '미등록'으로 분류
-      return found
+      let best: Listing | undefined
+      let bestScore = 0
+      for (const l of listings) {
+        const s = matchScore(a.listingName, l.name)
+        if (s > bestScore) {
+          bestScore = s
+          best = l
+        }
+      }
+      // 유사도가 낮으면 첫 숙소에 몰아넣지 않고 '미등록'으로 분류
+      return bestScore >= MIN_SCORE ? best : undefined
     }
     return listings[0]
   }
@@ -134,25 +151,28 @@ function applyActuals(bookings: Booking[], actualsRaw: ActualPayout[], listings:
   })
 
   const usedActualIds = new Set<string>()
-  const nameMatches = (mailName: string, listing: Listing | undefined): boolean =>
-    !!listing &&
-    (norm(mailName).includes(norm(listing.name).slice(0, 10)) ||
-      norm(listing.name).includes(norm(mailName).slice(0, 10)))
-
   const merged = [...bookings]
   const matchedIdx = new Set<number>()
 
-  // 1차: 숙소명이 있는 정산부터 이름까지 확인해서 매칭 (정확한 것이 우선권을 가짐)
+  // 1차: 숙소명이 있는 정산부터 — 같은 날짜 예약 중 이름 유사도가 가장 높은 숙소에 매칭
   for (const a of actuals) {
     if (!a.checkIn || !a.listingName) continue
-    const idx = merged.findIndex(
-      (b, i) => !matchedIdx.has(i) && b.checkIn === a.checkIn &&
-        nameMatches(a.listingName as string, listings.find((l) => l.id === b.listingId)),
-    )
-    if (idx >= 0) {
-      matchedIdx.add(idx)
+    let bestIdx = -1
+    let bestScore = 0
+    merged.forEach((b, i) => {
+      if (matchedIdx.has(i) || b.checkIn !== a.checkIn) return
+      const listing = listings.find((l) => l.id === b.listingId)
+      if (!listing) return
+      const s = matchScore(a.listingName as string, listing.name)
+      if (s > bestScore) {
+        bestScore = s
+        bestIdx = i
+      }
+    })
+    if (bestIdx >= 0 && bestScore >= MIN_SCORE) {
+      matchedIdx.add(bestIdx)
       usedActualIds.add(a.id)
-      merged[idx] = applyMatch(merged[idx], a)
+      merged[bestIdx] = applyMatch(merged[bestIdx], a)
     }
   }
 
