@@ -134,19 +134,38 @@ function applyActuals(bookings: Booking[], actualsRaw: ActualPayout[], listings:
   })
 
   const usedActualIds = new Set<string>()
-  // 1차: 체크인 날짜 + 숙소 이름 유사도로 매칭
-  const merged = bookings.map((b) => {
-    const match = actuals.find((a) => {
-      if (usedActualIds.has(a.id) || !a.checkIn || a.checkIn !== b.checkIn) return false
-      if (!a.listingName || listings.length <= 1) return true
-      const listing = listings.find((l) => l.id === b.listingId)
-      return listing ? norm(a.listingName).includes(norm(listing.name).slice(0, 10)) ||
-        norm(listing.name).includes(norm(a.listingName).slice(0, 10)) : true
-    })
-    if (!match) return b
-    usedActualIds.add(match.id)
-    return applyMatch(b, match)
-  })
+  const nameMatches = (mailName: string, listing: Listing | undefined): boolean =>
+    !!listing &&
+    (norm(mailName).includes(norm(listing.name).slice(0, 10)) ||
+      norm(listing.name).includes(norm(mailName).slice(0, 10)))
+
+  const merged = [...bookings]
+  const matchedIdx = new Set<number>()
+
+  // 1차: 숙소명이 있는 정산부터 이름까지 확인해서 매칭 (정확한 것이 우선권을 가짐)
+  for (const a of actuals) {
+    if (!a.checkIn || !a.listingName) continue
+    const idx = merged.findIndex(
+      (b, i) => !matchedIdx.has(i) && b.checkIn === a.checkIn &&
+        nameMatches(a.listingName as string, listings.find((l) => l.id === b.listingId)),
+    )
+    if (idx >= 0) {
+      matchedIdx.add(idx)
+      usedActualIds.add(a.id)
+      merged[idx] = applyMatch(merged[idx], a)
+    }
+  }
+
+  // 1.5차: 숙소명이 없는 정산은 남은 같은 날짜 예약에 배정
+  for (const a of actuals) {
+    if (usedActualIds.has(a.id) || !a.checkIn || a.listingName) continue
+    const idx = merged.findIndex((b, i) => !matchedIdx.has(i) && b.checkIn === a.checkIn)
+    if (idx >= 0) {
+      matchedIdx.add(idx)
+      usedActualIds.add(a.id)
+      merged[idx] = applyMatch(merged[idx], a)
+    }
+  }
 
   // 2차: 미매칭 정산 내역 → 독립 예약으로 추가 (iCal에 없는 과거 매출·미등록 숙소 백필)
   for (const a of actuals) {
