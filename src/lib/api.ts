@@ -27,6 +27,12 @@ export interface SmartDevice {
   deviceId: string
   name: string
   caps: string[]
+  room?: string
+  model?: string
+  /** 사용자가 지정한 별칭 */
+  alias?: string
+  /** 사용자가 지정한 공간/층 (거실·안방·2층 등) */
+  zone?: string
   listingId?: string
 }
 
@@ -47,6 +53,8 @@ export interface SmartHomeState {
   }
   devices: SmartDevice[]
   rules: Record<string, { preheat?: boolean; preheatMinutes?: number; targetTemp?: number; autoOff?: boolean }>
+  /** 마지막으로 발견된 기기 목록 (새로고침 후에도 유지) */
+  available?: SmartDevice[]
 }
 
 export interface PublicFormData {
