@@ -192,6 +192,8 @@ export const api = {
     request<{ ok: boolean }>(cfg, 'PUT', '/api/team', { members }),
   getWorkspaces: (cfg: AppConfig) =>
     request<{ workspaces: Workspace[] }>(cfg, 'GET', '/api/workspaces'),
+  mailBackfill: (cfg: AppConfig, payload: { provider: 'gmail' | 'naver'; email: string; appPassword: string }) =>
+    request<{ ok: boolean }>(cfg, 'POST', '/api/mail-backfill', payload),
   stOauthUrl: (cfg: AppConfig) =>
     request<{ url: string; redirectUri: string }>(cfg, 'POST', '/api/smarthome/st-oauth-url'),
   publishPage: (

@@ -7,8 +7,10 @@
     "cdk": "cdk"
   },
   "dependencies": {
+    "@aws-sdk/client-lambda": "^3.1095.0",
     "aws-cdk-lib": "^2.170.0",
     "constructs": "^10.4.2",
+    "imapflow": "^1.5.0",
     "mailparser": "^3.9.14"
   },
   "devDependencies": {

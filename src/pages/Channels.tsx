@@ -10,7 +10,30 @@ function PayoutMailCard() {
   const { cloud } = useStore()
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [bfProvider, setBfProvider] = useState<'gmail' | 'naver'>('gmail')
+  const [bfEmail, setBfEmail] = useState('')
+  const [bfPw, setBfPw] = useState('')
+  const [bfMsg, setBfMsg] = useState('')
+  const [bfBusy, setBfBusy] = useState(false)
   if (!cloud) return null
+
+  const startBackfill = async () => {
+    setBfMsg('')
+    if (!bfEmail.trim() || !bfPw.trim()) {
+      setBfMsg('이메일과 앱 비밀번호를 입력해 주세요')
+      return
+    }
+    setBfBusy(true)
+    try {
+      await cloud.mailBackfill({ provider: bfProvider, email: bfEmail.trim(), appPassword: bfPw.trim() })
+      setBfPw('')
+      setBfMsg('✓ 스캔 시작! 1~3분 후 이 페이지를 새로고침하면 결과가 표시됩니다.')
+    } catch (e) {
+      setBfMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBfBusy(false)
+    }
+  }
 
   const address = cloud.inboundKey && cloud.emailDomain ? `${cloud.inboundKey}@${cloud.emailDomain}` : null
 
@@ -70,6 +93,34 @@ function PayoutMailCard() {
               <li>1~2분 내 자동 반영 — 이 페이지를 새로고침하면 "✓ CSV 가져오기 완료" 확인 메시지와 건수가 표시됩니다</li>
             </ol>
             <p className="mt-1.5 text-emerald-700">예약 코드 기준으로 중복은 자동 제거되니 여러 번 보내도 안전합니다.</p>
+          </details>
+          <details className="text-xs">
+            <summary className="cursor-pointer font-medium">⚡ 과거 메일 자동 스캔 (Gmail/네이버 메일함 백필)</summary>
+            <p className="mt-1.5 mb-2 text-emerald-700">
+              메일함에서 에어비앤비·부킹닷컴 메일을 자동으로 찾아 과거 매출을 한 번에 반영합니다.
+              공식 IMAP 방식이라 안전하고, <b>앱 비밀번호는 1회 사용 후 폐기</b>됩니다 (서버에 저장 안 함).
+            </p>
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <select value={bfProvider} onChange={(e) => setBfProvider(e.target.value as 'gmail' | 'naver')}
+                className="rounded-lg border border-emerald-300 bg-white px-2 py-1.5">
+                <option value="gmail">Gmail</option>
+                <option value="naver">네이버</option>
+              </select>
+              <input value={bfEmail} onChange={(e) => setBfEmail(e.target.value)} placeholder="메일 주소"
+                className="flex-1 min-w-44 rounded-lg border border-emerald-300 px-2 py-1.5" />
+              <input type="password" value={bfPw} onChange={(e) => setBfPw(e.target.value)} placeholder="앱 비밀번호"
+                className="flex-1 min-w-36 rounded-lg border border-emerald-300 px-2 py-1.5 font-mono" />
+              <button onClick={startBackfill} disabled={bfBusy}
+                className="rounded-lg bg-emerald-600 text-white px-3 py-1.5 font-semibold hover:bg-emerald-700 disabled:opacity-50">
+                {bfBusy ? '시작 중…' : '스캔 시작'}
+              </button>
+            </div>
+            {bfMsg && <p className={bfMsg.startsWith('✓') ? 'text-emerald-700' : 'text-amber-600'}>{bfMsg}</p>}
+            <ul className="list-disc ml-4 space-y-0.5 text-slate-500">
+              <li><b>Gmail 앱 비밀번호</b>: myaccount.google.com/apppasswords에서 생성 (2단계 인증 필요, 16자리)</li>
+              <li><b>네이버</b>: 메일 환경설정 → POP3/IMAP 설정에서 <b>IMAP 사용</b> 켜기 + 보안설정의 애플리케이션 비밀번호 사용 (전에 만든 것 재사용 가능)</li>
+              <li>스캔이 끝나면 앱 비밀번호를 삭제하셔도 됩니다 — 이후 수집은 전달 필터가 자동 처리해요</li>
+            </ul>
           </details>
           {cloud.verification && (
             <div className="rounded-lg bg-white border border-emerald-200 p-3 text-xs">

@@ -103,6 +103,19 @@ export class StayPriceStack extends Stack {
       integration: new HttpLambdaIntegration('PublicIntegration', apiFn),
     })
 
+    // ── 과거 메일 IMAP 백필 (API에서 Event 타입으로 비동기 호출)
+    const backfillFn = new NodejsFunction(this, 'BackfillFn', {
+      entry: path.join(__dirname, '../lambda/mail-backfill.ts'),
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      timeout: Duration.minutes(5),
+      memorySize: 512,
+      environment: { TABLE_NAME: table.tableName },
+    })
+    table.grantReadWriteData(backfillFn)
+    backfillFn.grantInvoke(apiFn)
+    apiFn.addEnvironment('BACKFILL_FN', backfillFn.functionName)
+
     // ── iCal 자동 동기화: 6시간마다 전체 사용자 예약 갱신
     const syncFn = new NodejsFunction(this, 'SyncFn', {
       entry: path.join(__dirname, '../lambda/sync.ts'),
