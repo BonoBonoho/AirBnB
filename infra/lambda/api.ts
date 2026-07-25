@@ -25,6 +25,22 @@ type SmartDoc = {
   available?: SmartDevice[]
 }
 
+/** 공동 호스트 권한 — 조회는 팀원 모두 가능, 수정은 켜진 항목만 */
+interface CoPerms {
+  pricing?: boolean
+  channels?: boolean
+  smart?: boolean
+  guest?: boolean
+}
+interface TeamMember {
+  email: string
+  perms: CoPerms
+  invitedAt?: string
+}
+interface CohostMap {
+  owners: { sub: string; ownerEmail: string; perms: CoPerms }[]
+}
+
 /** 스마트싱스 토큰 결정 — OAuth면 자동 갱신 후 저장, 아니면 PAT */
 async function stTokenFor(sub: string, smart: SmartDoc): Promise<string | null> {
   return resolveStToken(smart.config.smartthings, ST_CLIENT_ID, ST_CLIENT_SECRET, async (oauth) => {
@@ -177,10 +193,64 @@ export async function handler(
     }
   }
 
-  const sub = event.requestContext.authorizer?.jwt?.claims?.sub as string | undefined
-  if (!sub) return json(401, { error: 'unauthorized' })
+  const callerSub = event.requestContext.authorizer?.jwt?.claims?.sub as string | undefined
+  if (!callerSub) return json(401, { error: 'unauthorized' })
+  const callerEmail = String(event.requestContext.authorizer?.jwt?.claims?.email ?? '').toLowerCase()
 
   try {
+    // ── 팀(공동 호스트) 관리 — 항상 로그인한 본인 계정 기준 (워크스페이스 전환과 무관)
+    if (path === '/api/workspaces' && method === 'GET') {
+      const share = callerEmail ? await getDoc<CohostMap>(`COHOST:${callerEmail}`, 'MAP') : null
+      return json(200, { workspaces: share?.owners ?? [] })
+    }
+
+    if (path === '/api/team' && method === 'GET') {
+      const team = await getDoc<{ members: TeamMember[] }>(callerSub, 'TEAM')
+      return json(200, team ?? { members: [] })
+    }
+
+    if (path === '/api/team' && method === 'PUT') {
+      const body = JSON.parse(event.body ?? '{}')
+      if (!Array.isArray(body.members)) return json(400, { error: 'members 배열이 필요합니다' })
+      const members: TeamMember[] = body.members
+        .slice(0, 20)
+        .map((m: { email?: unknown; perms?: CoPerms; invitedAt?: unknown }) => ({
+          email: String(m.email ?? '').toLowerCase().trim().slice(0, 120),
+          perms: {
+            pricing: !!m.perms?.pricing,
+            channels: !!m.perms?.channels,
+            smart: !!m.perms?.smart,
+            guest: !!m.perms?.guest,
+          },
+          invitedAt: typeof m.invitedAt === 'string' ? m.invitedAt : new Date().toISOString(),
+        }))
+        .filter((m: TeamMember) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m.email) && m.email !== callerEmail)
+      const prev = (await getDoc<{ members: TeamMember[] }>(callerSub, 'TEAM')) ?? { members: [] }
+      await putDoc(callerSub, 'TEAM', { members })
+      // 역방향 맵 갱신 — 공동 호스트가 로그인했을 때 자기 워크스페이스 목록을 찾는 용도
+      const emails = new Set([...prev.members.map((m) => m.email), ...members.map((m) => m.email)])
+      for (const email of emails) {
+        const cur = members.find((m) => m.email === email)
+        const map = (await getDoc<CohostMap>(`COHOST:${email}`, 'MAP')) ?? { owners: [] }
+        map.owners = (map.owners ?? []).filter((o) => o.sub !== callerSub)
+        if (cur) map.owners.push({ sub: callerSub, ownerEmail: callerEmail, perms: cur.perms })
+        await putDoc(`COHOST:${email}`, 'MAP', map)
+      }
+      return json(200, { ok: true })
+    }
+
+    // ── 워크스페이스 전환: 공동 호스트가 x-workspace 헤더로 소유자 데이터에 접근
+    let sub = callerSub
+    let perms: 'owner' | CoPerms = 'owner'
+    const wsHeader = event.headers?.['x-workspace']
+    if (wsHeader && wsHeader !== callerSub) {
+      const share = callerEmail ? await getDoc<CohostMap>(`COHOST:${callerEmail}`, 'MAP') : null
+      const grant = share?.owners?.find((o) => o.sub === wsHeader)
+      if (!grant) return json(403, { error: '이 워크스페이스에 대한 권한이 없습니다' })
+      sub = wsHeader
+      perms = grant.perms ?? {}
+    }
+    const can = (k: keyof CoPerms) => perms === 'owner' || !!(perms as CoPerms)[k]
     // 전체 상태 조회 (숙소 + 수동가격 + iCal 예약 + 실매출 + 메일수신 설정 + 시장 데이터)
     if (method === 'GET' && path === '/api/state') {
       const [listings, overrides, bookings, actuals, settings, verification, market, formQuestions, formResponses, formLinks, inquiries] =
@@ -214,6 +284,7 @@ export async function handler(
 
     // 미니홈 발행 — 정적 HTML을 사이트 버킷에 생성 (네이버/구글 봇 인덱싱 가능)
     if (method === 'POST' && path === '/api/publish-page') {
+      if (!can('guest')) return json(403, { error: '미니홈 발행 권한이 없습니다. 소유자에게 요청하세요.' })
       if (!SITE_BUCKET) return json(500, { error: '사이트 버킷이 설정되지 않았습니다' })
       const { listingId, slug, page } = JSON.parse(event.body ?? '{}')
       if (!listingId || !slug || !page) return json(400, { error: 'listingId/slug/page 필요' })
@@ -273,6 +344,7 @@ export async function handler(
     }
 
     if (path === '/api/smarthome' && method === 'PUT') {
+      if (!can('smart')) return json(403, { error: '스마트룸 설정 권한이 없습니다. 소유자에게 요청하세요.' })
       const body = JSON.parse(event.body ?? '{}')
       const prev = (await getDoc<{ config: SmartHomeConfig; devices: SmartDevice[]; rules: unknown; available: SmartDevice[] }>(sub, 'SMARTHOME')) ?? { config: {}, devices: [], rules: {}, available: [] }
       const next = {
@@ -287,6 +359,7 @@ export async function handler(
 
     // 스마트싱스 OAuth 시작 — 삼성 로그인 URL 발급 (토큰 자동 갱신 연동)
     if (path === '/api/smarthome/st-oauth-url' && method === 'POST') {
+      if (perms !== 'owner') return json(403, { error: '삼성 계정 연동은 소유자만 할 수 있습니다' })
       const redirectUri = `https://${event.requestContext.domainName}/public/st-oauth/callback`
       if (!ST_CLIENT_ID) {
         return json(400, {
@@ -301,6 +374,7 @@ export async function handler(
 
     // 연동된 계정의 기기 목록 (양쪽 provider 합침) — 조회 결과는 저장해서 새로고침 후에도 유지
     if (path === '/api/smarthome/devices' && method === 'GET') {
+      if (!can('smart')) return json(403, { error: '기기 불러오기 권한이 없습니다. 소유자에게 요청하세요.' })
       const smart = (await getDoc<SmartDoc>(sub, 'SMARTHOME')) ?? { config: {}, devices: [], rules: {} }
       const cfg = smart.config ?? {}
       const out: SmartDevice[] = []
@@ -355,6 +429,7 @@ export async function handler(
 
     // 기기 제어
     if (path === '/api/smarthome/command' && method === 'POST') {
+      if (!can('smart')) return json(403, { error: '기기 제어 권한이 없습니다. 소유자에게 요청하세요.' })
       const { provider, deviceId, command, arg } = JSON.parse(event.body ?? '{}')
       const ALLOWED: StCommandName[] = ['on', 'off', 'setCoolingSetpoint', 'setAcMode', 'setFanMode']
       if (!ALLOWED.includes(command)) return json(400, { error: '지원하지 않는 명령입니다' })
@@ -387,6 +462,7 @@ export async function handler(
 
     // 게스트 설문 질문 저장
     if (method === 'PUT' && path === '/api/form-questions') {
+      if (!can('guest')) return json(403, { error: '게스트 설문 수정 권한이 없습니다. 소유자에게 요청하세요.' })
       const { questions } = JSON.parse(event.body ?? '{}')
       if (!Array.isArray(questions)) return json(400, { error: 'questions 배열이 필요합니다' })
       await putDoc(sub, 'FORMQUESTIONS', questions.slice(0, 60))
@@ -395,6 +471,7 @@ export async function handler(
 
     // 예약별 설문 링크 발급 (이미 있으면 재사용)
     if (method === 'POST' && path === '/api/form-link') {
+      if (!can('guest')) return json(403, { error: '설문 링크 발급 권한이 없습니다. 소유자에게 요청하세요.' })
       const { bookingId, guestName, listingName, checkIn, nights } = JSON.parse(event.body ?? '{}')
       if (!bookingId) return json(400, { error: 'bookingId가 필요합니다' })
       const links = (await getDoc<Record<string, string>>(sub, 'FORMLINKS')) ?? {}
@@ -419,6 +496,7 @@ export async function handler(
 
     // 시장 스캔 — 지역·날짜 하나에 대한 경쟁 가격 분포 (저장은 클라이언트가 PUT /api/market으로)
     if (method === 'POST' && path === '/api/market-scan') {
+      if (!can('pricing')) return json(403, { error: '시장 스캔 권한이 없습니다. 소유자에게 요청하세요.' })
       const { region, checkin, checkout } = JSON.parse(event.body ?? '{}')
       if (!region || !checkin || !checkout) return json(400, { error: 'region/checkin/checkout 필요' })
       try {
@@ -430,6 +508,7 @@ export async function handler(
 
     // 시장 데이터 저장 (지역별 병합)
     if (method === 'PUT' && path === '/api/market') {
+      if (!can('pricing')) return json(403, { error: '시장 데이터 저장 권한이 없습니다. 소유자에게 요청하세요.' })
       const { region, data } = JSON.parse(event.body ?? '{}')
       if (!region || !data) return json(400, { error: 'region/data 필요' })
       const market = (await getDoc<Record<string, unknown>>(sub, 'MARKET')) ?? {}
@@ -440,6 +519,7 @@ export async function handler(
 
     // 정산 메일 수신 주소 발급 (이미 있으면 재사용)
     if (method === 'POST' && path === '/api/inbound-address') {
+      if (!can('channels')) return json(403, { error: '정산 메일 설정 권한이 없습니다. 소유자에게 요청하세요.' })
       const settings = (await getDoc<{ inboundKey?: string }>(sub, 'SETTINGS')) ?? {}
       if (!settings.inboundKey) {
         settings.inboundKey = randomBytes(6).toString('hex') // 12자 소문자 hex
@@ -458,6 +538,7 @@ export async function handler(
 
     // 전체 상태 저장
     if (method === 'PUT' && path === '/api/state') {
+      if (!can('pricing')) return json(403, { error: '가격·숙소 수정 권한이 없습니다. 소유자에게 요청하세요.' })
       const body = JSON.parse(event.body ?? '{}')
       if (!Array.isArray(body.listings)) return json(400, { error: 'listings must be an array' })
       await Promise.all([
@@ -469,12 +550,14 @@ export async function handler(
 
     // iCal 즉시 동기화
     if (method === 'POST' && path === '/api/sync') {
+      if (!can('channels')) return json(403, { error: '예약 동기화 권한이 없습니다. 소유자에게 요청하세요.' })
       const bookings = await syncUserBookings(sub)
       return json(200, { bookings })
     }
 
     // 에어비앤비 숙소 링크에서 정보 불러오기 (best-effort)
     if (method === 'POST' && path === '/api/import') {
+      if (!can('pricing')) return json(403, { error: '숙소 가져오기 권한이 없습니다. 소유자에게 요청하세요.' })
       const { url } = JSON.parse(event.body ?? '{}')
       if (typeof url !== 'string') return json(400, { error: 'url이 필요합니다' })
       try {

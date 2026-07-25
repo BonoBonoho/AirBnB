@@ -7,12 +7,13 @@ import { addDays } from './date'
 import type { AppConfig } from './config'
 import { loadConfig } from './config'
 import { initAuth, getIdToken, signOut as cognitoSignOut, currentUserEmail } from './auth'
-import { api } from './api'
-import type { ImportedListing, VerificationMail } from './api'
+import { api, setApiWorkspace } from './api'
+import type { ImportedListing, VerificationMail, Workspace, CoPerms, TeamMember } from './api'
 import Login from '../pages/Login'
 
 const LS_LISTINGS = 'stayprice.listings.v1'
 const LS_OVERRIDES = 'stayprice.overrides.v1'
+const LS_WORKSPACE = 'stayprice.workspace.v1'
 
 interface Store {
   listings: Listing[]
@@ -59,6 +60,19 @@ interface Store {
       listings: { id: string; name?: string }[]
     }>
     saveMarket: (region: string, data: MarketData) => Promise<void>
+    /** 팀(공동 호스트) 관리 — 소유자 전용 */
+    team: {
+      get: () => ReturnType<typeof api.getTeam>
+      put: (members: TeamMember[]) => ReturnType<typeof api.putTeam>
+    }
+    /** 워크스페이스: 내 숙소 ↔ 공동 호스트로 초대받은 숙소 전환 */
+    workspaces: {
+      list: Workspace[]
+      current: string | null
+      switch: (sub: string | null) => void
+    }
+    /** 현재 워크스페이스에서의 내 권한 ('owner' = 전체) */
+    perms: 'owner' | CoPerms
   } | null
   addListing: (listing: Listing) => void
   deleteListing: (id: string) => void
@@ -164,6 +178,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [formResponses, setFormResponses] = useState<Record<string, FormResponse>>({})
   const [formLinks, setFormLinks] = useState<Record<string, string>>({})
   const [inquiries, setInquiries] = useState<Inquiry[]>([])
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  // 선택된 워크스페이스는 첫 렌더 전에 API 모듈에 주입 (이후 모든 요청에 헤더로 실림)
+  const [wsCurrent] = useState<string | null>(() => {
+    const saved = localStorage.getItem(LS_WORKSPACE)
+    setApiWorkspace(saved)
+    return saved
+  })
 
   // 1) 설정 로드 → 클라우드/데모 모드 결정
   useEffect(() => {
@@ -175,6 +196,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setConfig(cfg)
     })
   }, [])
+
+  // 워크스페이스 목록 로드 + 유효성 확인 (초대가 취소된 워크스페이스면 내 숙소로 복귀)
+  useEffect(() => {
+    if (!config || !authed) return
+    api.getWorkspaces(config)
+      .then((r) => {
+        setWorkspaces(r.workspaces)
+        if (wsCurrent && !r.workspaces.some((w) => w.sub === wsCurrent)) {
+          localStorage.removeItem(LS_WORKSPACE)
+          setApiWorkspace(null)
+          window.location.reload()
+        }
+      })
+      .catch(() => setWorkspaces([]))
+  }, [config, authed, wsCurrent])
 
   // 2) 클라우드 모드: 로그인 후 서버 상태 로드 (처음이면 기본 숙소 시드)
   useEffect(() => {
@@ -284,6 +320,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               await api.putMarket(config, region, data)
               setMarket((prev) => ({ ...prev, [region]: data }))
             },
+            team: {
+              get: () => api.getTeam(config),
+              put: (members: TeamMember[]) => api.putTeam(config, members),
+            },
+            workspaces: {
+              list: workspaces,
+              current: wsCurrent,
+              switch: (sub: string | null) => {
+                if (sub) localStorage.setItem(LS_WORKSPACE, sub)
+                else localStorage.removeItem(LS_WORKSPACE)
+                window.location.reload()
+              },
+            },
+            perms: wsCurrent
+              ? (workspaces.find((w) => w.sub === wsCurrent)?.perms ?? {})
+              : ('owner' as const),
           }
         : null,
       addListing: (listing) => setListings((prev) => [...prev, listing]),
@@ -306,7 +358,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setOverrides([])
       },
     }),
-    [listings, bookings, overrides, config, inboundKey, actuals, verification, market, formQuestions, formResponses, formLinks, inquiries],
+    [listings, bookings, overrides, config, inboundKey, actuals, verification, market, formQuestions, formResponses, formLinks, inquiries, workspaces, wsCurrent],
   )
 
   if (config === undefined) {
