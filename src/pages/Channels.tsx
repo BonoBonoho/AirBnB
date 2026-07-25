@@ -265,7 +265,10 @@ export default function Channels() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {ALL_CHANNELS.map((c) => {
                 const info = CHANNEL_INFO[c]
-                const connected = l.channels.includes(c)
+                // iCal 주소가 입력돼 있으면 연동된 것으로 표시 (채널 토글과 별개)
+                const hasIcal =
+                  (c === 'airbnb' && !!l.icalUrl) || (c === 'booking' && !!l.bookingIcalUrl)
+                const connected = hasIcal || l.channels.includes(c)
                 return (
                   <button
                     key={c}
@@ -288,7 +291,9 @@ export default function Channels() {
                     </div>
                     <div className="text-[11px] text-slate-400 mt-1">수수료 약 {info.feePct}%</div>
                     {connected && (
-                      <div className="text-[11px] text-emerald-600 mt-1">가격 동기화: 매일 자동</div>
+                      <div className="text-[11px] text-emerald-600 mt-1">
+                        {hasIcal ? '예약 동기화: 6시간 자동' : '가격 동기화: 매일 자동'}
+                      </div>
                     )}
                   </button>
                 )
