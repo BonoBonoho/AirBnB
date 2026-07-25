@@ -36,6 +36,7 @@ export default function Guests() {
   const [period, setPeriod] = useState<Period>('upcoming')
   const [query, setQuery] = useState('')
   const [listingFilter, setListingFilter] = useState('')
+  const [grouped, setGrouped] = useState(false)
   const [noteEdit, setNoteEdit] = useState('')
   const [noteText, setNoteText] = useState('')
   const [copiedId, setCopiedId] = useState('')
@@ -75,6 +76,26 @@ export default function Guests() {
   }, [bookings, period, query, listingFilter, t])
 
   const revenue = filtered.reduce((s, b) => s + b.totalPrice, 0)
+
+  // 숙소별 그루핑 (미등록 숙소는 메일 속 이름으로 묶음)
+  const groups = useMemo(() => {
+    const map = new Map<string, { key: string; name: string; items: Booking[]; nights: number; revenue: number }>()
+    for (const b of filtered) {
+      const listing = listings.find((l) => l.id === b.listingId)
+      const key = listing ? listing.id : b.srcListingName ? `src:${b.srcListingName}` : 'unknown'
+      const name = listing
+        ? `${listing.thumbnail} ${listing.name}`
+        : b.srcListingName
+          ? `🏚️ ${b.srcListingName} (미등록)`
+          : '🏚️ 숙소 미지정'
+      if (!map.has(key)) map.set(key, { key, name, items: [], nights: 0, revenue: 0 })
+      const g = map.get(key)!
+      g.items.push(b)
+      g.nights += b.nights
+      g.revenue += b.totalPrice
+    }
+    return [...map.values()]
+  }, [filtered, listings])
 
   const statusOf = (b: Booking): { label: string; cls: string } => {
     const co = checkOut(b)
@@ -134,6 +155,14 @@ export default function Guests() {
             {p.label}
           </button>
         ))}
+        <button
+          onClick={() => setGrouped(!grouped)}
+          className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
+            grouped ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          🏠 숙소별 묶기{grouped ? ' ✓' : ''}
+        </button>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -161,10 +190,25 @@ export default function Guests() {
       </div>
 
       {filtered.length === 0 ? (
-        <Card><p className="text-sm text-slate-400">해당 기간의 예약이 없습니다.</p></Card>
+        <Card>
+          <p className="text-sm text-slate-400">
+            해당 기간의 예약이 없습니다.
+            {listingFilter && ' — 이 숙소의 iCal 주소가 등록되어 있는지 (숙소 관리 → ✏️ 수정), 채널 연동에서 동기화했는지 확인해 보세요.'}
+          </p>
+        </Card>
       ) : (
+        (grouped ? groups : [{ key: '_all', name: '', items: filtered, nights: 0, revenue: 0 }]).map((g) => (
+        <div key={g.key} className="mb-5">
+          {grouped && (
+            <div className="flex items-center justify-between flex-wrap gap-1 mb-2 px-1">
+              <div className="font-semibold text-sm truncate max-w-[60%]">{g.name}</div>
+              <div className="text-xs text-slate-500">
+                {g.items.length}건 · {g.nights}박 · <b className="text-slate-700">₩{g.revenue.toLocaleString()}</b>
+              </div>
+            </div>
+          )}
         <div className="space-y-2.5">
-          {filtered.map((b) => {
+          {g.items.map((b) => {
             const listing = listings.find((l) => l.id === b.listingId)
             const st = statusOf(b)
             const resp = cloud?.formResponses[b.id]
@@ -250,6 +294,8 @@ export default function Guests() {
             )
           })}
         </div>
+        </div>
+        ))
       )}
     </div>
   )
