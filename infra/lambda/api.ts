@@ -6,6 +6,10 @@ import { ddb, TABLE_NAME, getDoc, putDoc, syncUserBookings } from './shared'
 import { fetchAirbnbListing } from './airbnb-import'
 import { scanMarket } from './market-scan'
 import { renderListingPage, renderSitemap } from './public-page'
+import {
+  stListDevices, stStatus, stCommand, tuyaListDevices, tuyaStatus, tuyaCommand,
+} from './smarthome'
+import type { SmartHomeConfig, SmartDevice, DeviceStatus } from './smarthome'
 
 const s3 = new S3Client({})
 const SITE_BUCKET = process.env.SITE_BUCKET
@@ -213,6 +217,80 @@ export async function handler(
         })),
       ])
       return json(200, { url: `${PUBLIC_ORIGIN}/s/${slug}` })
+    }
+
+    // ── 스마트홈 (스마트싱스 + Tuya) ──
+    if (path === '/api/smarthome' && method === 'GET') {
+      const smart = await getDoc(sub, 'SMARTHOME')
+      return json(200, smart ?? { config: {}, devices: [], rules: {} })
+    }
+
+    if (path === '/api/smarthome' && method === 'PUT') {
+      const body = JSON.parse(event.body ?? '{}')
+      const prev = (await getDoc<{ config: SmartHomeConfig; devices: SmartDevice[]; rules: unknown }>(sub, 'SMARTHOME')) ?? { config: {}, devices: [], rules: {} }
+      const next = {
+        config: body.config !== undefined ? body.config : prev.config,
+        devices: body.devices !== undefined ? body.devices : prev.devices,
+        rules: body.rules !== undefined ? body.rules : prev.rules,
+      }
+      await putDoc(sub, 'SMARTHOME', next)
+      return json(200, { ok: true })
+    }
+
+    // 연동된 계정의 기기 목록 (양쪽 provider 합침)
+    if (path === '/api/smarthome/devices' && method === 'GET') {
+      const smart = await getDoc<{ config: SmartHomeConfig }>(sub, 'SMARTHOME')
+      const cfg = smart?.config ?? {}
+      const out: SmartDevice[] = []
+      const errors: string[] = []
+      if (cfg.smartthings?.token) {
+        try { out.push(...(await stListDevices(cfg.smartthings.token))) }
+        catch (e) { errors.push(`스마트싱스: ${e instanceof Error ? e.message : e}`) }
+      }
+      if (cfg.tuya?.accessId) {
+        try { out.push(...(await tuyaListDevices(cfg.tuya))) }
+        catch (e) { errors.push(`Tuya: ${e instanceof Error ? e.message : e}`) }
+      }
+      return json(200, { devices: out, errors })
+    }
+
+    // 매핑된 기기들의 실시간 상태
+    if (path === '/api/smarthome/status' && method === 'GET') {
+      const smart = await getDoc<{ config: SmartHomeConfig; devices: (SmartDevice & { listingId: string })[] }>(sub, 'SMARTHOME')
+      if (!smart) return json(200, { statuses: [] })
+      const statuses: (DeviceStatus & { provider: string })[] = []
+      for (const d of (smart.devices ?? []).slice(0, 20)) {
+        try {
+          const s = d.provider === 'smartthings' && smart.config.smartthings
+            ? await stStatus(smart.config.smartthings.token, d.deviceId)
+            : d.provider === 'tuya' && smart.config.tuya
+              ? await tuyaStatus(smart.config.tuya, d.deviceId)
+              : null
+          if (s) statuses.push({ ...s, provider: d.provider })
+        } catch {
+          statuses.push({ deviceId: d.deviceId, online: false, provider: d.provider })
+        }
+      }
+      return json(200, { statuses })
+    }
+
+    // 기기 제어
+    if (path === '/api/smarthome/command' && method === 'POST') {
+      const { provider, deviceId, command, arg } = JSON.parse(event.body ?? '{}')
+      const smart = await getDoc<{ config: SmartHomeConfig }>(sub, 'SMARTHOME')
+      if (!smart?.config) return json(400, { error: '스마트홈 연동이 설정되지 않았습니다' })
+      try {
+        if (provider === 'smartthings' && smart.config.smartthings) {
+          await stCommand(smart.config.smartthings.token, String(deviceId), command, arg)
+        } else if (provider === 'tuya' && smart.config.tuya) {
+          await tuyaCommand(smart.config.tuya, String(deviceId), command)
+        } else {
+          return json(400, { error: '해당 provider가 연동되지 않았습니다' })
+        }
+        return json(200, { ok: true })
+      } catch (e) {
+        return json(422, { error: e instanceof Error ? e.message : '명령 실패' })
+      }
     }
 
     // 게스트 설문 질문 저장

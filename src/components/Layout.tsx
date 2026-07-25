@@ -11,6 +11,7 @@ const NAV = [
   { to: '/door', label: '스마트도어', icon: '🚪' },
   { to: '/guestform', label: '게스트 설문', icon: '📋' },
   { to: '/site', label: '미니홈', icon: '🌐' },
+  { to: '/smartroom', label: '스마트룸', icon: '🌡️' },
 ]
 
 export default function Layout() {
