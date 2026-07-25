@@ -7,6 +7,14 @@ export interface SmartDevice {
   name: string
   /** 감지된 기능: temp/humidity/switch/ac */
   caps: string[]
+  /** 스마트싱스 앱에서 지정한 방 이름 (같은 이름 기기 구분용) */
+  room?: string
+  /** 모델명/카테고리 */
+  model?: string
+  /** 사용자가 지정한 별칭 (기기 원래 이름 대신 표시) */
+  alias?: string
+  /** 사용자가 지정한 공간/층 (숙소 안 레이아웃 구분: 거실·안방·2층 등) */
+  zone?: string
 }
 
 export interface DeviceStatus {
@@ -43,16 +51,46 @@ async function stFetch(token: string, path: string, init?: RequestInit): Promise
 
 export async function stListDevices(token: string): Promise<SmartDevice[]> {
   const data = (await stFetch(token, '/devices')) as {
-    items: { deviceId: string; label?: string; name: string; components?: { capabilities: { id: string }[] }[] }[]
+    items: {
+      deviceId: string; label?: string; name: string
+      roomId?: string; locationId?: string
+      deviceManufacturerCode?: string
+      ocf?: { modelNumber?: string }
+      components?: { capabilities: { id: string }[] }[]
+    }[]
   }
-  return (data.items ?? []).map((d) => {
+  const items = data.items ?? []
+
+  // 방 이름 조회 — 같은 이름 기기(에어컨 여러 대) 구분용
+  const roomNames = new Map<string, string>()
+  const locationIds = [...new Set(items.map((d) => d.locationId).filter((x): x is string => !!x))]
+  for (const loc of locationIds) {
+    try {
+      const rooms = (await stFetch(token, `/locations/${loc}/rooms`)) as {
+        items?: { roomId: string; name: string }[]
+      }
+      for (const r of rooms.items ?? []) roomNames.set(r.roomId, r.name)
+    } catch {
+      // 방 조회 실패해도 기기 목록은 반환
+    }
+  }
+
+  return items.map((d) => {
     const capIds = (d.components ?? []).flatMap((c) => c.capabilities.map((x) => x.id))
     const caps: string[] = []
     if (capIds.includes('temperatureMeasurement')) caps.push('temp')
     if (capIds.includes('relativeHumidityMeasurement')) caps.push('humidity')
     if (capIds.includes('switch')) caps.push('switch')
     if (capIds.includes('thermostatCoolingSetpoint') || capIds.includes('airConditionerMode')) caps.push('ac')
-    return { provider: 'smartthings' as const, deviceId: d.deviceId, name: d.label || d.name, caps }
+    const model = d.ocf?.modelNumber?.split('|')[0] || undefined
+    return {
+      provider: 'smartthings' as const,
+      deviceId: d.deviceId,
+      name: d.label || d.name,
+      caps,
+      room: d.roomId ? roomNames.get(d.roomId) : undefined,
+      model,
+    }
   })
 }
 
@@ -149,7 +187,7 @@ export async function tuyaListDevices(cfg: NonNullable<SmartHomeConfig['tuya']>)
     if (codes.some((c) => /temp_current|va_temperature/.test(c))) caps.push('temp')
     if (codes.some((c) => /humidity/.test(c))) caps.push('humidity')
     if (codes.some((c) => /^switch(_1)?$|switch_led/.test(c))) caps.push('switch')
-    return { provider: 'tuya' as const, deviceId: d.id, name: d.name, caps }
+    return { provider: 'tuya' as const, deviceId: d.id, name: d.name, caps, model: d.category }
   })
 }
 

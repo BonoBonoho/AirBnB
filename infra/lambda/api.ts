@@ -227,19 +227,20 @@ export async function handler(
 
     if (path === '/api/smarthome' && method === 'PUT') {
       const body = JSON.parse(event.body ?? '{}')
-      const prev = (await getDoc<{ config: SmartHomeConfig; devices: SmartDevice[]; rules: unknown }>(sub, 'SMARTHOME')) ?? { config: {}, devices: [], rules: {} }
+      const prev = (await getDoc<{ config: SmartHomeConfig; devices: SmartDevice[]; rules: unknown; available: SmartDevice[] }>(sub, 'SMARTHOME')) ?? { config: {}, devices: [], rules: {}, available: [] }
       const next = {
         config: body.config !== undefined ? body.config : prev.config,
         devices: body.devices !== undefined ? body.devices : prev.devices,
         rules: body.rules !== undefined ? body.rules : prev.rules,
+        available: body.available !== undefined ? body.available : (prev.available ?? []),
       }
       await putDoc(sub, 'SMARTHOME', next)
       return json(200, { ok: true })
     }
 
-    // 연동된 계정의 기기 목록 (양쪽 provider 합침)
+    // 연동된 계정의 기기 목록 (양쪽 provider 합침) — 조회 결과는 저장해서 새로고침 후에도 유지
     if (path === '/api/smarthome/devices' && method === 'GET') {
-      const smart = await getDoc<{ config: SmartHomeConfig }>(sub, 'SMARTHOME')
+      const smart = await getDoc<{ config: SmartHomeConfig; devices?: SmartDevice[]; rules?: unknown }>(sub, 'SMARTHOME')
       const cfg = smart?.config ?? {}
       const out: SmartDevice[] = []
       const errors: string[] = []
@@ -250,6 +251,14 @@ export async function handler(
       if (cfg.tuya?.accessId) {
         try { out.push(...(await tuyaListDevices(cfg.tuya))) }
         catch (e) { errors.push(`Tuya: ${e instanceof Error ? e.message : e}`) }
+      }
+      if (out.length > 0) {
+        await putDoc(sub, 'SMARTHOME', {
+          config: cfg,
+          devices: smart?.devices ?? [],
+          rules: smart?.rules ?? {},
+          available: out,
+        })
       }
       return json(200, { devices: out, errors })
     }
