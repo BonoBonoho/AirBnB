@@ -16,7 +16,7 @@ function PayoutMailCard() {
 
   return (
     <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-900">
-      <div className="font-semibold mb-1">💰 실매출 자동 수집 (정산 메일 파싱)</div>
+      <div className="font-semibold mb-1">💰 실매출 자동 수집 (예약·정산 메일 + CSV)</div>
       {!cloud.emailDomain ? (
         <p>
           커스텀 도메인 연결 후 활성화됩니다. 도메인이 연결되면 전용 수신 주소가 발급되고,
@@ -55,9 +55,21 @@ function PayoutMailCard() {
               <li>Gmail → ⚙️ 설정 → <b>전달 및 POP/IMAP</b> → "전달 주소 추가"에 위 주소 입력</li>
               <li>Gmail이 위 주소로 확인 메일을 보냅니다 → 잠시 후 이 페이지를 새로고침하면 아래에 <b>인증 코드</b>가 표시됩니다</li>
               <li>코드 입력으로 전달 주소 인증 완료</li>
-              <li>Gmail 검색창에 <code>from:airbnb.com</code> 입력 → 검색 옵션에서 <b>필터 만들기</b> → "전달" 체크 후 위 주소 선택</li>
+              <li>Gmail 검색창에 <code>from:(airbnb.com OR booking.com)</code> 입력 → 검색 옵션에서 <b>필터 만들기</b> → "전달" 체크 후 위 주소 선택</li>
             </ol>
-            <p className="mt-1.5 text-emerald-700">에어비앤비 발신 메일만 전달되며, 그 외 메일이 와도 서버에서 즉시 삭제됩니다.</p>
+            <p className="mt-1.5 text-emerald-700">
+              예약 확정 메일은 예약 즉시, 정산 메일은 지급 시 자동 반영됩니다. 그 외 메일은 서버에서 즉시 삭제돼요.
+            </p>
+          </details>
+          <details className="text-xs">
+            <summary className="cursor-pointer font-medium">📎 과거 매출 일괄 가져오기 (CSV 첨부 메일)</summary>
+            <ol className="list-decimal ml-4 mt-1.5 space-y-1">
+              <li><b>에어비앤비</b>: 호스트 모드 → 수입 → 거래 내역 → <b>CSV 다운로드</b></li>
+              <li><b>부킹닷컴</b>: 엑스트라넷 → 예약 → <b>CSV로 내보내기</b></li>
+              <li>다운받은 파일을 <b>위 수신 주소로 첨부해서 메일 전송</b> (제목·본문은 아무거나)</li>
+              <li>1~2분 내 자동 반영 — 이 페이지를 새로고침하면 "✓ CSV 가져오기 완료" 확인 메시지와 건수가 표시됩니다</li>
+            </ol>
+            <p className="mt-1.5 text-emerald-700">예약 코드 기준으로 중복은 자동 제거되니 여러 번 보내도 안전합니다.</p>
           </details>
           {cloud.verification && (
             <div className="rounded-lg bg-white border border-emerald-200 p-3 text-xs">

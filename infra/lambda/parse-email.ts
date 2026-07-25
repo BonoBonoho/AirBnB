@@ -3,6 +3,7 @@ import { S3Client, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb'
 import { simpleParser } from 'mailparser'
+import { parseCsv, rowsToPayouts } from './csv-import'
 
 const s3 = new S3Client({})
 const ddb = DynamoDBDocumentClient.from(
@@ -57,7 +58,7 @@ export function parseAirbnbEmail(
   // 금액: '호스트 수익/예상 수익/총액/총 요금 ₩423,000' 우선, 없으면 본문 최대 금액 (₩ 또는 KRW 표기)
   let amount: number | null = null
   const labeled = src.match(
-    /(?:호스트\s*수익|예상\s*수익|총\s*수익|총\s*요금|총\s*금액|정산|payout|total\s*price)[^\d₩]{0,80}(?:₩|KRW)\s*([\d,]+)/i,
+    /(?:호스트\s*수[익입]|예상\s*수[익입]|총\s*수[익입]|총\s*요금|총\s*금액|예약\s*금액|정산|payout|total\s*price|total\s*amount)[^\d₩]{0,80}(?:₩|KRW)\s*([\d,]+)/i,
   )
   if (labeled) {
     amount = Number(labeled[1].replace(/,/g, ''))
@@ -167,6 +168,39 @@ export async function handler(event: S3Event): Promise<void> {
       if (!sub) {
         console.log('unknown inbound key, dropping', to.join(','))
         continue
+      }
+
+      // ── CSV 첨부 → 과거 매출 일괄 백필 (에어비앤비 거래내역 / 부킹닷컴 예약 내보내기)
+      const csvAtts = (mail.attachments ?? []).filter(
+        (a) => /\.(csv|tsv)$/i.test(a.filename ?? '') || /text\/csv/i.test(a.contentType ?? ''),
+      )
+      if (csvAtts.length > 0) {
+        const actuals = (await getDoc<ActualPayout[]>(sub, 'ACTUALS')) ?? []
+        const byId = new Map(actuals.map((a) => [a.id, a]))
+        let imported = 0
+        for (const att of csvAtts) {
+          try {
+            const rows = parseCsv(att.content.toString('utf8'))
+            const payouts = rowsToPayouts(rows, receivedAt, att.filename ?? 'csv')
+            for (const p of payouts) {
+              byId.set(p.id, p)
+              imported++
+            }
+          } catch (e) {
+            console.error('csv parse failed:', att.filename, e)
+          }
+        }
+        if (imported > 0) {
+          await putDoc(sub, 'ACTUALS', [...byId.values()].slice(-800))
+          await putDoc(sub, 'VERIFICATION', {
+            subject: `✓ CSV 가져오기 완료 — ${csvAtts.map((a) => a.filename).join(', ')}`,
+            snippet: `${imported}건의 예약/정산 내역이 반영되었습니다. 대시보드와 채널 연동 화면에서 확인하세요.`,
+            receivedAt,
+          })
+          console.log(`csv imported: ${imported} rows from ${csvAtts.length} file(s)`)
+          continue
+        }
+        console.log('csv attachment found but no usable rows:', csvAtts.map((a) => a.filename).join(','))
       }
 
       const isOtaSender =
