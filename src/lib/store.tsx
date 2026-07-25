@@ -30,7 +30,7 @@ interface Store {
     inboundKey: string | null
     requestInboundAddress: () => Promise<string>
     /** 과거 메일 IMAP 백필 (앱 비밀번호는 서버에 저장되지 않음) */
-    mailBackfill: (p: { provider: 'gmail' | 'naver'; email: string; appPassword: string }) => Promise<void>
+    mailBackfill: (p: { provider: 'gmail' | 'naver'; email: string; appPassword: string; reset?: boolean }) => Promise<void>
     actualsCount: number
     actuals: ActualPayout[]
     verification: VerificationMail | null

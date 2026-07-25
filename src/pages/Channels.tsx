@@ -15,6 +15,7 @@ function PayoutMailCard() {
   const [bfPw, setBfPw] = useState('')
   const [bfMsg, setBfMsg] = useState('')
   const [bfBusy, setBfBusy] = useState(false)
+  const [bfReset, setBfReset] = useState(false)
   if (!cloud) return null
 
   const startBackfill = async () => {
@@ -25,7 +26,7 @@ function PayoutMailCard() {
     }
     setBfBusy(true)
     try {
-      await cloud.mailBackfill({ provider: bfProvider, email: bfEmail.trim(), appPassword: bfPw.trim() })
+      await cloud.mailBackfill({ provider: bfProvider, email: bfEmail.trim(), appPassword: bfPw.trim(), reset: bfReset })
       setBfPw('')
       setBfMsg('✓ 스캔 시작! 1~3분 후 이 페이지를 새로고침하면 결과가 표시됩니다.')
     } catch (e) {
@@ -115,6 +116,10 @@ function PayoutMailCard() {
                 {bfBusy ? '시작 중…' : '스캔 시작'}
               </button>
             </div>
+            <label className="flex items-center gap-1.5 mb-2 cursor-pointer text-slate-600">
+              <input type="checkbox" checked={bfReset} onChange={(e) => setBfReset(e.target.checked)} className="accent-emerald-600" />
+              처음부터 다시 스캔 (숙소 이름 매칭 개선을 기존 메일에도 반영)
+            </label>
             {bfMsg && <p className={bfMsg.startsWith('✓') ? 'text-emerald-700' : 'text-amber-600'}>{bfMsg}</p>}
             <ul className="list-disc ml-4 space-y-0.5 text-slate-500">
               <li><b>Gmail 앱 비밀번호</b>: myaccount.google.com/apppasswords에서 생성 (2단계 인증 필요, 16자리)</li>
