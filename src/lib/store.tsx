@@ -37,6 +37,14 @@ interface Store {
     formQuestions: FormQuestion[] | null
     formResponses: Record<string, FormResponse>
     formLinks: Record<string, string>
+    /** 스마트홈 API (스마트룸 페이지에서 사용) */
+    smart: {
+      get: () => ReturnType<typeof api.getSmartHome>
+      put: (patch: Parameters<typeof api.putSmartHome>[1]) => ReturnType<typeof api.putSmartHome>
+      listDevices: () => ReturnType<typeof api.listSmartDevices>
+      status: () => ReturnType<typeof api.smartStatus>
+      command: (p: Parameters<typeof api.smartCommand>[1]) => ReturnType<typeof api.smartCommand>
+    }
     /** 미니홈 문의함 + 발행 */
     inquiries: Inquiry[]
     publishPage: (payload: Parameters<typeof api.publishPage>[1]) => Promise<string>
@@ -245,6 +253,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             formQuestions,
             formResponses,
             formLinks,
+            smart: {
+              get: () => api.getSmartHome(config),
+              put: (patch) => api.putSmartHome(config, patch),
+              listDevices: () => api.listSmartDevices(config),
+              status: () => api.smartStatus(config),
+              command: (p) => api.smartCommand(config, p),
+            },
             inquiries,
             publishPage: async (payload) => {
               const res = await api.publishPage(config, payload)

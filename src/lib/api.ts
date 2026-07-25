@@ -22,6 +22,33 @@ export interface RemoteState {
   inquiries: Inquiry[]
 }
 
+export interface SmartDevice {
+  provider: 'smartthings' | 'tuya'
+  deviceId: string
+  name: string
+  caps: string[]
+  listingId?: string
+}
+
+export interface SmartDeviceStatus {
+  deviceId: string
+  provider: string
+  online: boolean
+  temperature?: number
+  humidity?: number
+  switch?: 'on' | 'off'
+  coolingSetpoint?: number
+}
+
+export interface SmartHomeState {
+  config: {
+    smartthings?: { token: string }
+    tuya?: { accessId: string; accessKey: string; region: 'us' | 'eu' | 'cn' | 'in' }
+  }
+  devices: SmartDevice[]
+  rules: Record<string, { preheat?: boolean; preheatMinutes?: number; targetTemp?: number; autoOff?: boolean }>
+}
+
 export interface PublicFormData {
   questions: FormQuestion[] | null
   meta: { guestName: string; listingName: string; checkIn: string; nights: number }
@@ -101,6 +128,16 @@ export const api = {
     cfg: AppConfig,
     payload: { bookingId: string; guestName: string; listingName: string; checkIn: string; nights: number },
   ) => request<{ token: string }>(cfg, 'POST', '/api/form-link', payload),
+  getSmartHome: (cfg: AppConfig) =>
+    request<SmartHomeState>(cfg, 'GET', '/api/smarthome'),
+  putSmartHome: (cfg: AppConfig, patch: Partial<SmartHomeState>) =>
+    request<{ ok: boolean }>(cfg, 'PUT', '/api/smarthome', patch),
+  listSmartDevices: (cfg: AppConfig) =>
+    request<{ devices: SmartDevice[]; errors: string[] }>(cfg, 'GET', '/api/smarthome/devices'),
+  smartStatus: (cfg: AppConfig) =>
+    request<{ statuses: SmartDeviceStatus[] }>(cfg, 'GET', '/api/smarthome/status'),
+  smartCommand: (cfg: AppConfig, payload: { provider: string; deviceId: string; command: string; arg?: number }) =>
+    request<{ ok: boolean }>(cfg, 'POST', '/api/smarthome/command', payload),
   publishPage: (
     cfg: AppConfig,
     payload: {

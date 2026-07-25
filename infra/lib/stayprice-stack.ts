@@ -112,6 +112,21 @@ export class StayPriceStack extends Stack {
       targets: [new targets.LambdaFunction(syncFn)],
     })
 
+    // ── 스마트홈 자동화: 15분마다 체크인 예열 / 체크아웃 자동 차단
+    const automationFn = new NodejsFunction(this, 'AutomationFn', {
+      entry: path.join(__dirname, '../lambda/automation.ts'),
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      timeout: Duration.minutes(3),
+      memorySize: 256,
+      environment: { TABLE_NAME: table.tableName },
+    })
+    table.grantReadWriteData(automationFn)
+    new events.Rule(this, 'AutomationSchedule', {
+      schedule: events.Schedule.rate(Duration.minutes(15)),
+      targets: [new targets.LambdaFunction(automationFn)],
+    })
+
     // ── 프론트엔드 호스팅: S3(비공개) + CloudFront
     const siteBucket = new s3.Bucket(this, 'SiteBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
