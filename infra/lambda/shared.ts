@@ -114,10 +114,32 @@ export async function syncUserBookings(sub: string): Promise<IcalBooking[]> {
       errors.push(String(e))
     }
   }
+
+  // 부킹닷컴 iCal 정리:
+  // 1) 에어비앤비 예약과 날짜가 겹치는 부킹 이벤트는 채널 간 동기화 미러(중복)이므로 제거
+  // 2) 남은 이벤트의 "CLOSED - Not available" 요약은 자리표시 이름으로 교체
+  //    (부킹은 iCal에 게스트명을 주지 않음 — 이름·금액은 정산 메일 매칭으로 채워짐)
+  const endOf = (b: IcalBooking) =>
+    new Date(Date.parse(b.checkIn) + b.nights * 86400000).toISOString().slice(0, 10)
+  const cleaned = all.filter((b) => {
+    if (b.channel !== 'booking') return true
+    const mirrored = all.some(
+      (a) =>
+        a.channel === 'airbnb' && a.listingId === b.listingId &&
+        a.checkIn < endOf(b) && b.checkIn < endOf(a),
+    )
+    return !mirrored
+  })
+  for (const b of cleaned) {
+    if (b.channel === 'booking' && /closed|not available|unavailable|blocked/i.test(b.guestName)) {
+      b.guestName = 'Booking.com 예약'
+    }
+  }
+
   // 하나라도 성공했거나 연동이 없으면 저장 (전부 실패 시 기존 데이터 유지)
-  if (jobs.length === 0 || all.length > 0 || errors.length < jobs.length) {
-    await putDoc(sub, 'BOOKINGS', all)
+  if (jobs.length === 0 || cleaned.length > 0 || errors.length < jobs.length) {
+    await putDoc(sub, 'BOOKINGS', cleaned)
   }
   if (errors.length) console.error('sync errors:', errors)
-  return all
+  return cleaned
 }
