@@ -46,4 +46,8 @@ jobs:
 
       - name: CDK deploy
         working-directory: infra
+        env:
+          # 스마트싱스 OAuth 앱 (없으면 빈 값 → PAT 폴백)
+          ST_OAUTH_CLIENT_ID: ${{ secrets.ST_OAUTH_CLIENT_ID }}
+          ST_OAUTH_CLIENT_SECRET: ${{ secrets.ST_OAUTH_CLIENT_SECRET }}
         run: npx cdk deploy --all --require-approval never

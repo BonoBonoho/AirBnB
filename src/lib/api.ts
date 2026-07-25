@@ -44,11 +44,23 @@ export interface SmartDeviceStatus {
   humidity?: number
   switch?: 'on' | 'off'
   coolingSetpoint?: number
+  acMode?: string
+  fanMode?: string
+  power?: number
 }
+
+/** 기기 사용 기록 — 일별 가동시간(분) + 최근 켬/끔 이벤트 */
+export interface SmartLog {
+  lastSample: Record<string, { sw?: string; ts: string }>
+  days: Record<string, Record<string, number>>
+  events: { ts: string; d: string; ev: string; by: 'user' | 'auto' | 'sample' }[]
+}
+
+export type SmartCommandName = 'on' | 'off' | 'setCoolingSetpoint' | 'setAcMode' | 'setFanMode'
 
 export interface SmartHomeState {
   config: {
-    smartthings?: { token: string }
+    smartthings?: { token?: string; oauth?: { expiresAt: number } }
     tuya?: { accessId: string; accessKey: string; region: 'us' | 'eu' | 'cn' | 'in' }
   }
   devices: SmartDevice[]
@@ -144,8 +156,12 @@ export const api = {
     request<{ devices: SmartDevice[]; errors: string[] }>(cfg, 'GET', '/api/smarthome/devices'),
   smartStatus: (cfg: AppConfig) =>
     request<{ statuses: SmartDeviceStatus[] }>(cfg, 'GET', '/api/smarthome/status'),
-  smartCommand: (cfg: AppConfig, payload: { provider: string; deviceId: string; command: string; arg?: number }) =>
+  smartCommand: (cfg: AppConfig, payload: { provider: string; deviceId: string; command: SmartCommandName; arg?: number | string }) =>
     request<{ ok: boolean }>(cfg, 'POST', '/api/smarthome/command', payload),
+  smartHistory: (cfg: AppConfig) =>
+    request<{ log: SmartLog }>(cfg, 'GET', '/api/smarthome/history'),
+  stOauthUrl: (cfg: AppConfig) =>
+    request<{ url: string; redirectUri: string }>(cfg, 'POST', '/api/smarthome/st-oauth-url'),
   publishPage: (
     cfg: AppConfig,
     payload: {

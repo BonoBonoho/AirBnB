@@ -2,17 +2,24 @@
  * 예약 연동 스마트홈 자동화 — 15분마다 실행
  * - 체크인 예열: 체크인 예정시간 N분 전 에어컨 ON + 목표온도 (게스트 설문의 체크인 예정시간 우선, 없으면 15:00)
  * - 체크아웃 자동 차단: 체크아웃(11:00) 후 매핑된 기기 전원 OFF
+ * - 상태 샘플링: 배정된 기기의 켬/끔을 기록해 가동시간을 적산 (사용 기록)
  */
 import { ScanCommand } from '@aws-sdk/lib-dynamodb'
 import { ddb, TABLE_NAME } from './shared'
 import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb'
-import { stCommand, tuyaCommand, type SmartHomeConfig } from './smarthome'
+import {
+  stCommand, tuyaCommand, stStatus, tuyaStatus, resolveStToken,
+  type SmartHomeConfig, type SmartLog,
+} from './smarthome'
+
+const ST_CLIENT_ID = process.env.ST_OAUTH_CLIENT_ID || undefined
+const ST_CLIENT_SECRET = process.env.ST_OAUTH_CLIENT_SECRET || undefined
 
 interface MappedDevice {
   provider: 'smartthings' | 'tuya'
   deviceId: string
   name: string
-  listingId: string
+  listingId?: string
   caps: string[]
 }
 
@@ -85,13 +92,23 @@ export async function handler(): Promise<void> {
 
   for (const sub of users) {
     try {
-      const smart = await getDoc<{ config: SmartHomeConfig; devices: MappedDevice[]; rules: Rules }>(sub, 'SMARTHOME')
+      const smart = await getDoc<{ config: SmartHomeConfig; devices: MappedDevice[]; rules: Rules; available?: unknown }>(sub, 'SMARTHOME')
       if (!smart?.config || !smart.devices?.length) continue
       const rules = smart.rules ?? {}
       const bookings = (await getDoc<BookingLite[]>(sub, 'BOOKINGS')) ?? []
       const formResponses = (await getDoc<Record<string, { answers?: Record<string, string> }>>(sub, 'FORMRESP')) ?? {}
       const done = (await getDoc<Record<string, string>>(sub, 'AUTOMATION_DONE')) ?? {}
+      const log = (await getDoc<SmartLog>(sub, 'SMARTLOG')) ?? { lastSample: {}, days: {}, events: [] }
       let dirty = false
+      let logDirty = false
+
+      // 스마트싱스 토큰 — OAuth면 자동 갱신 후 저장 (전체 doc을 다시 써서 available 등 보존)
+      const stTok = smart.config.smartthings
+        ? await resolveStToken(smart.config.smartthings, ST_CLIENT_ID, ST_CLIENT_SECRET, async (oauth) => {
+            smart.config.smartthings = { ...smart.config.smartthings, oauth }
+            await putDoc(sub, 'SMARTHOME', smart)
+          }).catch((e) => { console.error(`st token refresh failed for ${sub}:`, e); return null })
+        : null
 
       for (const [listingId, rule] of Object.entries(rules)) {
         const devices = smart.devices.filter((d) => d.listingId === listingId)
@@ -108,7 +125,9 @@ export async function handler(): Promise<void> {
             const key = `preheat:${todayCheckin.id}`
             if (nowMin >= fireAt && !done[key]) {
               for (const d of devices.filter((x) => x.caps.includes('ac') || x.caps.includes('switch'))) {
-                await sendCommand(smart.config, d, 'on', rule.targetTemp).catch((e) => console.error('preheat fail', e))
+                await sendCommand(stTok, smart.config, d, 'on', rule.targetTemp)
+                  .then(() => { log.events.unshift({ ts: new Date().toISOString(), d: d.deviceId, ev: 'on', by: 'auto' }); logDirty = true })
+                  .catch((e) => console.error('preheat fail', e))
               }
               done[key] = new Date().toISOString()
               dirty = true
@@ -132,7 +151,9 @@ export async function handler(): Promise<void> {
             const key = `autooff:${checkoutToday.id}`
             if (!done[key]) {
               for (const d of devices.filter((x) => x.caps.includes('switch') || x.caps.includes('ac'))) {
-                await sendCommand(smart.config, d, 'off').catch((e) => console.error('autooff fail', e))
+                await sendCommand(stTok, smart.config, d, 'off')
+                  .then(() => { log.events.unshift({ ts: new Date().toISOString(), d: d.deviceId, ev: 'off', by: 'auto' }); logDirty = true })
+                  .catch((e) => console.error('autooff fail', e))
               }
               done[key] = new Date().toISOString()
               dirty = true
@@ -140,6 +161,45 @@ export async function handler(): Promise<void> {
             }
           }
         }
+      }
+
+      // ── 상태 샘플링: 켬/끔 감지 + 가동시간(분) 적산 — 15분 주기라 15분 해상도
+      const nowIso = new Date().toISOString()
+      for (const d of smart.devices.slice(0, 20)) {
+        let sw: 'on' | 'off' | undefined
+        let sampled = false
+        try {
+          const s = d.provider === 'smartthings' && stTok
+            ? await stStatus(stTok, d.deviceId)
+            : d.provider === 'tuya' && smart.config.tuya
+              ? await tuyaStatus(smart.config.tuya, d.deviceId)
+              : null
+          if (s) { sw = s.switch; sampled = true }
+        } catch {
+          // 오프라인/일시 오류 — 이번 샘플은 건너뜀
+        }
+        if (!sampled) continue
+        const prev = log.lastSample[d.deviceId]
+        if (prev?.sw === 'on') {
+          const mins = Math.min(30, Math.round((Date.now() - Date.parse(prev.ts)) / 60000))
+          if (mins > 0) {
+            const day = (log.days[today] ??= {})
+            day[d.deviceId] = (day[d.deviceId] ?? 0) + mins
+          }
+        }
+        if (prev?.sw && sw && prev.sw !== sw) {
+          // 리모컨·앱 등 외부에서 바뀐 켬/끔도 이벤트로 남김
+          log.events.unshift({ ts: nowIso, d: d.deviceId, ev: sw, by: 'sample' })
+        }
+        log.lastSample[d.deviceId] = { sw, ts: nowIso }
+        logDirty = true
+      }
+
+      if (logDirty) {
+        const dayCutoff = kstDateStr(new Date(now.getTime() - 30 * 86400000))
+        for (const k of Object.keys(log.days)) if (k < dayCutoff) delete log.days[k]
+        log.events = log.events.slice(0, 300)
+        await putDoc(sub, 'SMARTLOG', log)
       }
 
       if (dirty) {
@@ -155,15 +215,16 @@ export async function handler(): Promise<void> {
 }
 
 async function sendCommand(
+  stTok: string | null,
   config: SmartHomeConfig,
   device: MappedDevice,
   cmd: 'on' | 'off',
   targetTemp?: number,
 ): Promise<void> {
-  if (device.provider === 'smartthings' && config.smartthings) {
-    await stCommand(config.smartthings.token, device.deviceId, cmd)
+  if (device.provider === 'smartthings' && stTok) {
+    await stCommand(stTok, device.deviceId, cmd)
     if (cmd === 'on' && targetTemp && device.caps.includes('ac')) {
-      await stCommand(config.smartthings.token, device.deviceId, 'setCoolingSetpoint', targetTemp)
+      await stCommand(stTok, device.deviceId, 'setCoolingSetpoint', targetTemp)
     }
   } else if (device.provider === 'tuya' && config.tuya) {
     await tuyaCommand(config.tuya, device.deviceId, cmd)

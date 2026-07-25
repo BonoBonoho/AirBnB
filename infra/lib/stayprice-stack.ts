@@ -56,13 +56,19 @@ export class StayPriceStack extends Stack {
     })
 
     // ── API: Lambda + HTTP API (Cognito JWT 인증)
+    // 스마트싱스 OAuth 앱 자격증명 — GitHub 시크릿 ST_OAUTH_CLIENT_ID/SECRET (없으면 PAT 폴백)
+    const stOauthEnv = {
+      ST_OAUTH_CLIENT_ID: process.env.ST_OAUTH_CLIENT_ID ?? '',
+      ST_OAUTH_CLIENT_SECRET: process.env.ST_OAUTH_CLIENT_SECRET ?? '',
+    }
+
     const apiFn = new NodejsFunction(this, 'ApiFn', {
       entry: path.join(__dirname, '../lambda/api.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
       timeout: Duration.seconds(30),
       memorySize: 256,
-      environment: { TABLE_NAME: table.tableName },
+      environment: { TABLE_NAME: table.tableName, ...stOauthEnv },
     })
     table.grantReadWriteData(apiFn)
 
@@ -119,7 +125,7 @@ export class StayPriceStack extends Stack {
       runtime: lambda.Runtime.NODEJS_22_X,
       timeout: Duration.minutes(3),
       memorySize: 256,
-      environment: { TABLE_NAME: table.tableName },
+      environment: { TABLE_NAME: table.tableName, ...stOauthEnv },
     })
     table.grantReadWriteData(automationFn)
     new events.Rule(this, 'AutomationSchedule', {

@@ -8,12 +8,30 @@ import { scanMarket } from './market-scan'
 import { renderListingPage, renderSitemap } from './public-page'
 import {
   stListDevices, stStatus, stCommand, tuyaListDevices, tuyaStatus, tuyaCommand,
+  resolveStToken, stAuthorizeUrl, stExchangeCode,
 } from './smarthome'
-import type { SmartHomeConfig, SmartDevice, DeviceStatus } from './smarthome'
+import type { SmartHomeConfig, SmartDevice, DeviceStatus, SmartLog, StCommandName } from './smarthome'
 
 const s3 = new S3Client({})
 const SITE_BUCKET = process.env.SITE_BUCKET
 const PUBLIC_ORIGIN = process.env.PUBLIC_ORIGIN ?? ''
+const ST_CLIENT_ID = process.env.ST_OAUTH_CLIENT_ID || undefined
+const ST_CLIENT_SECRET = process.env.ST_OAUTH_CLIENT_SECRET || undefined
+
+type SmartDoc = {
+  config: SmartHomeConfig
+  devices: (SmartDevice & { listingId?: string })[]
+  rules: unknown
+  available?: SmartDevice[]
+}
+
+/** 스마트싱스 토큰 결정 — OAuth면 자동 갱신 후 저장, 아니면 PAT */
+async function stTokenFor(sub: string, smart: SmartDoc): Promise<string | null> {
+  return resolveStToken(smart.config.smartthings, ST_CLIENT_ID, ST_CLIENT_SECRET, async (oauth) => {
+    smart.config.smartthings = { ...smart.config.smartthings, oauth }
+    await putDoc(sub, 'SMARTHOME', smart)
+  })
+}
 
 const json = (statusCode: number, body: unknown): APIGatewayProxyResultV2 => ({
   statusCode,
@@ -130,6 +148,35 @@ export async function handler(
     return json(404, { error: 'not found' })
   }
 
+  // ── 공개 라우트: 스마트싱스 OAuth 콜백 (삼성 로그인 후 리다이렉트 도착지)
+  if (path === '/public/st-oauth/callback' && method === 'GET') {
+    const q = event.queryStringParameters ?? {}
+    const back = (msg: string): APIGatewayProxyResultV2 => ({
+      statusCode: 302,
+      headers: { Location: `${PUBLIC_ORIGIN}/#/smartroom?st=${encodeURIComponent(msg)}` },
+      body: '',
+    })
+    try {
+      const state = q.state ?? ''
+      if (!q.code || !/^[a-f0-9]{16,64}$/.test(state)) return back('error')
+      const link = await getDoc<{ sub: string; createdAt: string; used?: boolean }>(`STOAUTH:${state}`, 'MAP')
+      if (!link || link.used || Date.parse(link.createdAt) < Date.now() - 10 * 60 * 1000) return back('expired')
+      if (!ST_CLIENT_ID || !ST_CLIENT_SECRET) return back('noapp')
+      const redirectUri = `https://${event.requestContext.domainName}/public/st-oauth/callback`
+      const oauth = await stExchangeCode(ST_CLIENT_ID, ST_CLIENT_SECRET, q.code, redirectUri)
+      const smart = (await getDoc<SmartDoc>(link.sub, 'SMARTHOME')) ?? { config: {}, devices: [], rules: {} }
+      smart.config.smartthings = { ...smart.config.smartthings, oauth }
+      await Promise.all([
+        putDoc(link.sub, 'SMARTHOME', smart),
+        putDoc(`STOAUTH:${state}`, 'MAP', { ...link, used: true }),
+      ])
+      return back('connected')
+    } catch (e) {
+      console.error('st-oauth callback failed', e)
+      return back('error')
+    }
+  }
+
   const sub = event.requestContext.authorizer?.jwt?.claims?.sub as string | undefined
   if (!sub) return json(401, { error: 'unauthorized' })
 
@@ -238,15 +285,31 @@ export async function handler(
       return json(200, { ok: true })
     }
 
+    // 스마트싱스 OAuth 시작 — 삼성 로그인 URL 발급 (토큰 자동 갱신 연동)
+    if (path === '/api/smarthome/st-oauth-url' && method === 'POST') {
+      const redirectUri = `https://${event.requestContext.domainName}/public/st-oauth/callback`
+      if (!ST_CLIENT_ID) {
+        return json(400, {
+          error: `서비스에 스마트싱스 OAuth 앱이 아직 등록되지 않았습니다. 운영자가 SmartThings CLI로 앱을 만들고(리다이렉트 URI: ${redirectUri}) GitHub 시크릿 ST_OAUTH_CLIENT_ID/ST_OAUTH_CLIENT_SECRET을 등록해야 합니다.`,
+          redirectUri,
+        })
+      }
+      const state = randomBytes(16).toString('hex')
+      await putDoc(`STOAUTH:${state}`, 'MAP', { sub, createdAt: new Date().toISOString() })
+      return json(200, { url: stAuthorizeUrl(ST_CLIENT_ID, redirectUri, state), redirectUri })
+    }
+
     // 연동된 계정의 기기 목록 (양쪽 provider 합침) — 조회 결과는 저장해서 새로고침 후에도 유지
     if (path === '/api/smarthome/devices' && method === 'GET') {
-      const smart = await getDoc<{ config: SmartHomeConfig; devices?: SmartDevice[]; rules?: unknown }>(sub, 'SMARTHOME')
-      const cfg = smart?.config ?? {}
+      const smart = (await getDoc<SmartDoc>(sub, 'SMARTHOME')) ?? { config: {}, devices: [], rules: {} }
+      const cfg = smart.config ?? {}
       const out: SmartDevice[] = []
       const errors: string[] = []
-      if (cfg.smartthings?.token) {
-        try { out.push(...(await stListDevices(cfg.smartthings.token))) }
-        catch (e) { errors.push(`스마트싱스: ${e instanceof Error ? e.message : e}`) }
+      if (cfg.smartthings) {
+        try {
+          const tok = await stTokenFor(sub, smart)
+          if (tok) out.push(...(await stListDevices(tok)))
+        } catch (e) { errors.push(`스마트싱스: ${e instanceof Error ? e.message : e}`) }
       }
       if (cfg.tuya?.accessId) {
         try { out.push(...(await tuyaListDevices(cfg.tuya))) }
@@ -254,9 +317,9 @@ export async function handler(
       }
       if (out.length > 0) {
         await putDoc(sub, 'SMARTHOME', {
-          config: cfg,
-          devices: smart?.devices ?? [],
-          rules: smart?.rules ?? {},
+          config: smart.config,
+          devices: smart.devices ?? [],
+          rules: smart.rules ?? {},
           available: out,
         })
       }
@@ -265,13 +328,14 @@ export async function handler(
 
     // 매핑된 기기들의 실시간 상태
     if (path === '/api/smarthome/status' && method === 'GET') {
-      const smart = await getDoc<{ config: SmartHomeConfig; devices: (SmartDevice & { listingId: string })[] }>(sub, 'SMARTHOME')
+      const smart = await getDoc<SmartDoc>(sub, 'SMARTHOME')
       if (!smart) return json(200, { statuses: [] })
+      const stTok = smart.config.smartthings ? await stTokenFor(sub, smart).catch(() => null) : null
       const statuses: (DeviceStatus & { provider: string })[] = []
       for (const d of (smart.devices ?? []).slice(0, 20)) {
         try {
-          const s = d.provider === 'smartthings' && smart.config.smartthings
-            ? await stStatus(smart.config.smartthings.token, d.deviceId)
+          const s = d.provider === 'smartthings' && stTok
+            ? await stStatus(stTok, d.deviceId)
             : d.provider === 'tuya' && smart.config.tuya
               ? await tuyaStatus(smart.config.tuya, d.deviceId)
               : null
@@ -283,19 +347,38 @@ export async function handler(
       return json(200, { statuses })
     }
 
+    // 기기 사용 기록 (가동시간 집계 + 최근 이벤트)
+    if (path === '/api/smarthome/history' && method === 'GET') {
+      const log = (await getDoc<SmartLog>(sub, 'SMARTLOG')) ?? { lastSample: {}, days: {}, events: [] }
+      return json(200, { log })
+    }
+
     // 기기 제어
     if (path === '/api/smarthome/command' && method === 'POST') {
       const { provider, deviceId, command, arg } = JSON.parse(event.body ?? '{}')
-      const smart = await getDoc<{ config: SmartHomeConfig }>(sub, 'SMARTHOME')
+      const ALLOWED: StCommandName[] = ['on', 'off', 'setCoolingSetpoint', 'setAcMode', 'setFanMode']
+      if (!ALLOWED.includes(command)) return json(400, { error: '지원하지 않는 명령입니다' })
+      const smart = await getDoc<SmartDoc>(sub, 'SMARTHOME')
       if (!smart?.config) return json(400, { error: '스마트홈 연동이 설정되지 않았습니다' })
       try {
         if (provider === 'smartthings' && smart.config.smartthings) {
-          await stCommand(smart.config.smartthings.token, String(deviceId), command, arg)
+          const tok = await stTokenFor(sub, smart)
+          if (!tok) return json(400, { error: '스마트싱스 토큰이 없습니다. 다시 연동해 주세요.' })
+          await stCommand(tok, String(deviceId), command as StCommandName, arg)
         } else if (provider === 'tuya' && smart.config.tuya) {
+          if (command !== 'on' && command !== 'off') return json(400, { error: 'Tuya 기기는 켜기/끄기만 지원합니다' })
           await tuyaCommand(smart.config.tuya, String(deviceId), command)
         } else {
           return json(400, { error: '해당 provider가 연동되지 않았습니다' })
         }
+        // 사용 기록에 남기기
+        const log = (await getDoc<SmartLog>(sub, 'SMARTLOG')) ?? { lastSample: {}, days: {}, events: [] }
+        const ev = command === 'on' || command === 'off' ? command
+          : command === 'setCoolingSetpoint' ? `temp:${arg}`
+            : command === 'setAcMode' ? `mode:${arg}` : `fan:${arg}`
+        log.events.unshift({ ts: new Date().toISOString(), d: String(deviceId), ev, by: 'user' })
+        log.events = log.events.slice(0, 300)
+        await putDoc(sub, 'SMARTLOG', log)
         return json(200, { ok: true })
       } catch (e) {
         return json(422, { error: e instanceof Error ? e.message : '명령 실패' })

@@ -44,6 +44,8 @@ interface Store {
       listDevices: () => ReturnType<typeof api.listSmartDevices>
       status: () => ReturnType<typeof api.smartStatus>
       command: (p: Parameters<typeof api.smartCommand>[1]) => ReturnType<typeof api.smartCommand>
+      history: () => ReturnType<typeof api.smartHistory>
+      oauthUrl: () => ReturnType<typeof api.stOauthUrl>
     }
     /** 미니홈 문의함 + 발행 */
     inquiries: Inquiry[]
@@ -259,6 +261,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               listDevices: () => api.listSmartDevices(config),
               status: () => api.smartStatus(config),
               command: (p) => api.smartCommand(config, p),
+              history: () => api.smartHistory(config),
+              oauthUrl: () => api.stOauthUrl(config),
             },
             inquiries,
             publishPage: async (payload) => {
