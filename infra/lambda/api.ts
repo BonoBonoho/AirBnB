@@ -2,6 +2,7 @@ import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 }
 import { randomBytes } from 'node:crypto'
 import { PutCommand } from '@aws-sdk/lib-dynamodb'
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { ddb, TABLE_NAME, getDoc, putDoc, syncUserBookings } from './shared'
 import { fetchAirbnbListing } from './airbnb-import'
 import { scanMarket } from './market-scan'
@@ -13,6 +14,8 @@ import {
 import type { SmartHomeConfig, SmartDevice, DeviceStatus, SmartLog, StCommandName } from './smarthome'
 
 const s3 = new S3Client({})
+const lambdaClient = new LambdaClient({})
+const BACKFILL_FN = process.env.BACKFILL_FN
 const SITE_BUCKET = process.env.SITE_BUCKET
 const PUBLIC_ORIGIN = process.env.PUBLIC_ORIGIN ?? ''
 const ST_CLIENT_ID = process.env.ST_OAUTH_CLIENT_ID || undefined
@@ -514,6 +517,28 @@ export async function handler(
       const market = (await getDoc<Record<string, unknown>>(sub, 'MARKET')) ?? {}
       market[String(region)] = data
       await putDoc(sub, 'MARKET', market)
+      return json(200, { ok: true })
+    }
+
+    // 과거 메일 IMAP 백필 시작 — 앱 비밀번호는 백필 Lambda로 전달만 하고 저장하지 않는다
+    if (method === 'POST' && path === '/api/mail-backfill') {
+      if (!can('channels')) return json(403, { error: '채널·매출 권한이 없습니다. 소유자에게 요청하세요.' })
+      if (!BACKFILL_FN) return json(500, { error: '백필 기능이 아직 배포되지 않았습니다' })
+      const { provider, email, appPassword } = JSON.parse(event.body ?? '{}')
+      if (provider !== 'gmail' && provider !== 'naver') return json(400, { error: 'provider는 gmail 또는 naver' })
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email ?? ''))) return json(400, { error: '올바른 이메일이 필요합니다' })
+      const pw = String(appPassword ?? '').trim()
+      if (pw.length < 8 || pw.length > 64) return json(400, { error: '앱 비밀번호를 확인해 주세요' })
+      await lambdaClient.send(new InvokeCommand({
+        FunctionName: BACKFILL_FN,
+        InvocationType: 'Event',
+        Payload: Buffer.from(JSON.stringify({ sub, provider, email: String(email), appPassword: pw })),
+      }))
+      await putDoc(sub, 'VERIFICATION', {
+        subject: '⏳ 과거 메일 백필 진행 중…',
+        snippet: '메일함을 스캔하고 있습니다 (보통 1~3분). 잠시 후 이 페이지를 새로고침하면 결과가 표시됩니다.',
+        receivedAt: new Date().toISOString(),
+      })
       return json(200, { ok: true })
     }
 

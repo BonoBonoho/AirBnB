@@ -29,6 +29,8 @@ interface Store {
     emailDomain: string | null
     inboundKey: string | null
     requestInboundAddress: () => Promise<string>
+    /** 과거 메일 IMAP 백필 (앱 비밀번호는 서버에 저장되지 않음) */
+    mailBackfill: (p: { provider: 'gmail' | 'naver'; email: string; appPassword: string }) => Promise<void>
     actualsCount: number
     actuals: ActualPayout[]
     verification: VerificationMail | null
@@ -283,6 +285,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               const res = await api.requestInboundAddress(config)
               setInboundKey(res.inboundKey)
               return res.inboundKey
+            },
+            mailBackfill: async (p) => {
+              await api.mailBackfill(config, p)
             },
             actualsCount: actuals.length,
             actuals,
