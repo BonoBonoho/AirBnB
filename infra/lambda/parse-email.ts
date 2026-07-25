@@ -55,14 +55,24 @@ export function parseAirbnbEmail(
     ? 'booking'
     : 'airbnb'
 
-  // 금액: '호스트 수익/예상 수익/총액/총 요금 ₩423,000' 우선, 없으면 본문 최대 금액 (₩ 또는 KRW 표기)
+  // 금액: 호스트가 실제로 받는 돈(호스트 수익/총 입금액/정산액)을 최우선으로,
+  // 게스트 결제 총액(총 요금 등)은 후순위. 라벨이 없으면 본문 최대 금액.
+  const AMOUNT_PATTERNS = [
+    /호스트\s*수[익입][^\d₩]{0,80}(?:₩|KRW)\s*([\d,]+)/i,
+    /총\s*입금액[^\d₩]{0,80}(?:₩|KRW)\s*([\d,]+)/i,
+    /(?:정산|지급액?|payout)[^\d₩]{0,80}(?:₩|KRW)\s*([\d,]+)/i,
+    /(?:예상\s*수[익입]|총\s*수[익입])[^\d₩]{0,80}(?:₩|KRW)\s*([\d,]+)/i,
+    /(?:총\s*요금|총\s*금액|예약\s*금액|total\s*price|total\s*amount)[^\d₩]{0,80}(?:₩|KRW)\s*([\d,]+)/i,
+  ]
   let amount: number | null = null
-  const labeled = src.match(
-    /(?:호스트\s*수[익입]|예상\s*수[익입]|총\s*수[익입]|총\s*요금|총\s*금액|예약\s*금액|정산|payout|total\s*price|total\s*amount)[^\d₩]{0,80}(?:₩|KRW)\s*([\d,]+)/i,
-  )
-  if (labeled) {
-    amount = Number(labeled[1].replace(/,/g, ''))
-  } else {
+  for (const re of AMOUNT_PATTERNS) {
+    const m = src.match(re)
+    if (m) {
+      amount = Number(m[1].replace(/,/g, ''))
+      break
+    }
+  }
+  if (!amount) {
     const all = [...src.matchAll(/(?:₩|KRW)\s*([\d,]{5,12})/gi)].map((m) => Number(m[1].replace(/,/g, '')))
     if (all.length) amount = Math.max(...all)
   }
@@ -228,6 +238,12 @@ export async function handler(event: S3Event): Promise<void> {
         const payout = parseAirbnbEmail(subject, String(text), receivedAt)
         if (payout && (isOtaSender || payout.confirmationCode || payout.checkIn)) {
           const actuals = (await getDoc<ActualPayout[]>(sub, 'ACTUALS')) ?? []
+          const existing = actuals.find((a) => a.id === payout.id)
+          if (existing && existing.receivedAt > payout.receivedAt) {
+            // 이미 더 최신 메일(변경·정산)로 저장돼 있으면 과거 메일로 덮지 않는다
+            console.log(`older mail skipped for ${payout.id}`)
+            continue
+          }
           const rest = actuals.filter((a) => a.id !== payout.id)
           await putDoc(sub, 'ACTUALS', [...rest, payout].slice(-500))
           console.log(`actual saved: ${payout.id} ₩${payout.amount} (forwarded=${!isOtaSender})`)

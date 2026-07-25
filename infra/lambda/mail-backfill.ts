@@ -112,7 +112,9 @@ export async function handler(ev: BackfillEvent): Promise<void> {
           const text = mail.text || (typeof mail.html === 'string' ? mail.html : '')
           const p = parseAirbnbEmail(mail.subject ?? '', String(text), (mail.date ?? new Date()).toISOString())
           if (p) {
-            byId.set(p.id, p)
+            // 같은 예약의 메일이 여러 통이면 최신 메일(변경·정산)이 이긴다
+            const prev = byId.get(p.id)
+            if (!prev || p.receivedAt >= prev.receivedAt) byId.set(p.id, p)
             summary.saved++
           }
         } catch (e) {
