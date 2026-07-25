@@ -136,7 +136,9 @@ export async function handler(): Promise<void> {
           }
         }
 
-        // 체크아웃 자동 차단 (11:30 이후, 오늘이 체크아웃일이고 오늘 새 체크인이 없을 때)
+        // 체크아웃 자동 차단 (11:30 이후) — 당일 새 체크인이 있어도 일단 끄고,
+        // 체크인 예열 자동화가 예정 시간(N분 전)에 다시 켠다. 단 예열이 이미
+        // 켜진 뒤거나 예열 규칙이 꺼져 있으면 게스트 보호를 위해 끄지 않는다.
         if (rule.autoOff && nowMin >= 11 * 60 + 30) {
           const checkoutToday = bookings.find((b) => {
             if (b.listingId !== listingId || b.status === 'cancelled') return false
@@ -144,10 +146,12 @@ export async function handler(): Promise<void> {
             const co = new Date(Date.UTC(y, mo - 1, d + b.nights))
             return co.toISOString().slice(0, 10) === today
           })
-          const checkinToday = bookings.some(
+          const checkinToday = bookings.find(
             (b) => b.listingId === listingId && b.status !== 'cancelled' && b.checkIn === today,
           )
-          if (checkoutToday && !checkinToday) {
+          const keepOn =
+            !!checkinToday && (!rule.preheat || !!done[`preheat:${checkinToday.id}`])
+          if (checkoutToday && !keepOn) {
             const key = `autooff:${checkoutToday.id}`
             if (!done[key]) {
               for (const d of devices.filter((x) => x.caps.includes('switch') || x.caps.includes('ac'))) {

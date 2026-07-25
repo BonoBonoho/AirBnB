@@ -546,7 +546,7 @@ export default function SmartRoom() {
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={!!rule.autoOff} onChange={(e) => setRule(l.id, { autoOff: e.target.checked })} className="accent-indigo-600" />
-                체크아웃 후(11:30) 기기 자동 전원 차단 — 당일 새 체크인이 있으면 건너뜀
+                체크아웃 후(11:30) 기기 자동 전원 차단 — 당일 새 체크인이 있어도 껐다가, 위의 체크인 예열이 시간에 맞춰 다시 켭니다
               </label>
             </div>
           </Card>
