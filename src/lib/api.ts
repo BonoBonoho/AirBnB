@@ -20,6 +20,7 @@ export interface RemoteState {
   formResponses: Record<string, FormResponse>
   formLinks: Record<string, string>
   inquiries: Inquiry[]
+  guestNotes: Record<string, string>
 }
 
 export interface SmartDevice {
@@ -194,6 +195,8 @@ export const api = {
     request<{ workspaces: Workspace[] }>(cfg, 'GET', '/api/workspaces'),
   mailBackfill: (cfg: AppConfig, payload: { provider: 'gmail' | 'naver'; email: string; appPassword: string }) =>
     request<{ ok: boolean }>(cfg, 'POST', '/api/mail-backfill', payload),
+  putGuestNote: (cfg: AppConfig, bookingId: string, note: string) =>
+    request<{ ok: boolean }>(cfg, 'PUT', '/api/guest-notes', { bookingId, note }),
   stOauthUrl: (cfg: AppConfig) =>
     request<{ url: string; redirectUri: string }>(cfg, 'POST', '/api/smarthome/st-oauth-url'),
   publishPage: (

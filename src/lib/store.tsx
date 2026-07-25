@@ -50,6 +50,9 @@ interface Store {
       history: () => ReturnType<typeof api.smartHistory>
       oauthUrl: () => ReturnType<typeof api.stOauthUrl>
     }
+    /** 게스트 메모 (예약 id → 메모) */
+    guestNotes: Record<string, string>
+    saveGuestNote: (bookingId: string, note: string) => Promise<void>
     /** 미니홈 문의함 + 발행 */
     inquiries: Inquiry[]
     publishPage: (payload: Parameters<typeof api.publishPage>[1]) => Promise<string>
@@ -180,6 +183,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [formResponses, setFormResponses] = useState<Record<string, FormResponse>>({})
   const [formLinks, setFormLinks] = useState<Record<string, string>>({})
   const [inquiries, setInquiries] = useState<Inquiry[]>([])
+  const [guestNotes, setGuestNotes] = useState<Record<string, string>>({})
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   // 선택된 워크스페이스는 첫 렌더 전에 API 모듈에 주입 (이후 모든 요청에 헤더로 실림)
   const [wsCurrent] = useState<string | null>(() => {
@@ -232,6 +236,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setFormResponses(state.formResponses ?? {})
         setFormLinks(state.formLinks ?? {})
         setInquiries(state.inquiries ?? [])
+        setGuestNotes(state.guestNotes ?? {})
         setRemoteLoaded(true)
       })
       .catch(console.error)
@@ -305,6 +310,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               history: () => api.smartHistory(config),
               oauthUrl: () => api.stOauthUrl(config),
             },
+            guestNotes,
+            saveGuestNote: async (bookingId: string, note: string) => {
+              await api.putGuestNote(config, bookingId, note)
+              setGuestNotes((prev) => {
+                const next = { ...prev }
+                if (note.trim()) next[bookingId] = note.trim()
+                else delete next[bookingId]
+                return next
+              })
+            },
             inquiries,
             publishPage: async (payload) => {
               const res = await api.publishPage(config, payload)
@@ -363,7 +378,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setOverrides([])
       },
     }),
-    [listings, bookings, overrides, config, inboundKey, actuals, verification, market, formQuestions, formResponses, formLinks, inquiries, workspaces, wsCurrent],
+    [listings, bookings, overrides, config, inboundKey, actuals, verification, market, formQuestions, formResponses, formLinks, inquiries, guestNotes, workspaces, wsCurrent],
   )
 
   if (config === undefined) {
