@@ -267,6 +267,7 @@ export default function SmartRoom() {
     if (isOn && s?.acMode) chips.push(`❄️ ${modeLabel(s.acMode)}`)
     if (isOn && s?.fanMode) chips.push(`🌀 팬 ${fanLabel(s.fanMode)}`)
     if (isOn && s?.power !== undefined && s.power > 0) chips.push(`⚡ ${Math.round(s.power)}W`)
+    if (s?.energy !== undefined && s.energy > 0) chips.push(`🔋 누적 ${s.energy.toFixed(1)}kWh`)
     if (s && !s.online) chips.push('오프라인')
 
     const canSwitch = d.caps.includes('switch') || d.caps.includes('ac')
