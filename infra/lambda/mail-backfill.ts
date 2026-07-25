@@ -47,6 +47,9 @@ export async function handler(ev: BackfillEvent): Promise<void> {
     logger: false,
   })
 
+  // 소켓 타임아웃 등 IMAP 에러가 프로세스를 죽이지 않게 (unhandled 'error' 이벤트 방지)
+  client.on('error', (e: unknown) => console.error('imap connection error:', e))
+
   try {
     await client.connect()
   } catch (e) {
@@ -59,7 +62,7 @@ export async function handler(ev: BackfillEvent): Promise<void> {
   }
 
   const started = Date.now()
-  const summary = { scanned: 0, saved: 0, truncated: false }
+  const summary = { scanned: 0, saved: 0, truncated: false, remaining: 0 }
   try {
     // Gmail은 전체보관함(\All)에서 검색해야 보관처리된 메일까지 잡힌다
     let box = 'INBOX'
@@ -77,7 +80,12 @@ export async function handler(ev: BackfillEvent): Promise<void> {
         { or: [{ from: 'airbnb' }, { from: 'booking.com' }] },
         { uid: true },
       )) as number[] | false
-      const list = uids ? uids.slice(-800) : []
+
+      // 체크포인트: 이미 처리한 메일은 건너뛰어 재실행 시 이어서 진행 (최신 메일 우선)
+      const stateKey = `${ev.provider}:${ev.email.toLowerCase()}`
+      const state = (await getDoc<Record<string, number[]>>(ev.sub, 'BACKFILLSTATE')) ?? {}
+      const done = new Set(state[stateKey] ?? [])
+      const list = (uids ? uids.slice(-800) : []).filter((u) => !done.has(u)).reverse()
 
       const actuals = (await getDoc<ActualPayout[]>(ev.sub, 'ACTUALS')) ?? []
       const byId = new Map(actuals.map((a) => [a.id, a]))
@@ -95,6 +103,7 @@ export async function handler(ev: BackfillEvent): Promise<void> {
           for await (const c of dl.content) chunks.push(Buffer.from(c))
           const mail = await simpleParser(Buffer.concat(chunks))
           summary.scanned++
+          done.add(uid)
           const from = (mail.from?.value?.[0]?.address ?? '').toLowerCase()
           if (!/airbnb|booking/.test(from)) continue
           const text = mail.text || (typeof mail.html === 'string' ? mail.html : '')
@@ -109,13 +118,16 @@ export async function handler(ev: BackfillEvent): Promise<void> {
       }
 
       await putDoc(ev.sub, 'ACTUALS', [...byId.values()].slice(-800))
+      state[stateKey] = [...done].slice(-3000)
+      await putDoc(ev.sub, 'BACKFILLSTATE', state)
+      summary.remaining = list.length - summary.scanned
     } finally {
       lock.release()
     }
 
     await finish(
       `✓ 과거 메일 백필 완료 (${ev.provider === 'naver' ? '네이버' : 'Gmail'})`,
-      `에어비앤비·부킹닷컴 메일 ${summary.scanned}통 검사 → ${summary.saved}건 매출 반영.${summary.truncated ? '\n(시간 제한으로 일부만 처리 — 한 번 더 실행하면 이어서 반영됩니다)' : ''}\n앱 비밀번호는 저장하지 않았습니다. 보안을 위해 이제 해당 앱 비밀번호를 삭제하셔도 됩니다.`,
+      `에어비앤비·부킹닷컴 메일 ${summary.scanned}통 검사 → ${summary.saved}건 매출 반영.${summary.truncated ? `\n(시간 제한으로 일부만 처리 — 남은 ${summary.remaining}통은 '스캔 시작'을 한 번 더 누르면 이어서 처리됩니다)` : ''}\n앱 비밀번호는 저장하지 않았습니다. 보안을 위해 이제 해당 앱 비밀번호를 삭제하셔도 됩니다.`,
     )
     console.log(`backfill done: scanned=${summary.scanned} saved=${summary.saved} truncated=${summary.truncated}`)
   } catch (e) {
