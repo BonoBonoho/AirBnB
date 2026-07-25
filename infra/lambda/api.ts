@@ -256,7 +256,7 @@ export async function handler(
     const can = (k: keyof CoPerms) => perms === 'owner' || !!(perms as CoPerms)[k]
     // 전체 상태 조회 (숙소 + 수동가격 + iCal 예약 + 실매출 + 메일수신 설정 + 시장 데이터)
     if (method === 'GET' && path === '/api/state') {
-      const [listings, overrides, bookings, actuals, settings, verification, market, formQuestions, formResponses, formLinks, inquiries] =
+      const [listings, overrides, bookings, actuals, settings, verification, market, formQuestions, formResponses, formLinks, inquiries, guestNotes] =
         await Promise.all([
           getDoc(sub, 'LISTINGS'),
           getDoc(sub, 'OVERRIDES'),
@@ -269,6 +269,7 @@ export async function handler(
           getDoc(sub, 'FORMRESP'),
           getDoc(sub, 'FORMLINKS'),
           getDoc(sub, 'INQUIRIES'),
+          getDoc(sub, 'GUESTNOTES'),
         ])
       return json(200, {
         listings,
@@ -282,7 +283,21 @@ export async function handler(
         formResponses: formResponses ?? {},
         formLinks: formLinks ?? {},
         inquiries: inquiries ?? [],
+        guestNotes: guestNotes ?? {},
       })
+    }
+
+    // 게스트 메모 저장 (예약별)
+    if (method === 'PUT' && path === '/api/guest-notes') {
+      if (!can('guest')) return json(403, { error: '게스트 메모 권한이 없습니다. 소유자에게 요청하세요.' })
+      const { bookingId, note } = JSON.parse(event.body ?? '{}')
+      if (!bookingId) return json(400, { error: 'bookingId가 필요합니다' })
+      const notes = (await getDoc<Record<string, string>>(sub, 'GUESTNOTES')) ?? {}
+      const trimmed = String(note ?? '').slice(0, 1000)
+      if (trimmed) notes[String(bookingId)] = trimmed
+      else delete notes[String(bookingId)]
+      await putDoc(sub, 'GUESTNOTES', notes)
+      return json(200, { ok: true })
     }
 
     // 미니홈 발행 — 정적 HTML을 사이트 버킷에 생성 (네이버/구글 봇 인덱싱 가능)

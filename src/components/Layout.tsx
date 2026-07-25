@@ -7,6 +7,7 @@ type NavPerm = 'view' | keyof CoPerms | 'owner'
 const NAV: { to: string; label: string; icon: string; perm: NavPerm }[] = [
   { to: '/', label: '대시보드', icon: '📊', perm: 'view' },
   { to: '/calendar', label: '가격 캘린더', icon: '📅', perm: 'view' },
+  { to: '/guests', label: '게스트 관리', icon: '👥', perm: 'view' },
   { to: '/listings', label: '숙소 관리', icon: '🏠', perm: 'pricing' },
   { to: '/rules', label: '가격 규칙', icon: '⚙️', perm: 'pricing' },
   { to: '/market', label: '시장 분석', icon: '📈', perm: 'pricing' },
