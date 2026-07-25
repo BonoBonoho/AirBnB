@@ -1,0 +1,61 @@
+name: Debug booking data
+
+# 진단용: 특정 체크인 날짜의 정산(ACTUALS)·예약(BOOKINGS) 요약을 출력.
+# 공개 저장소 로그이므로 게스트명·전체 금액은 출력하지 않는다 (마스킹).
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Check-in date (YYYY-MM-DD)'
+        required: true
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ap-northeast-2
+    steps:
+      - name: Dump masked ACTUALS and BOOKINGS for date
+        run: |
+          TABLE=$(aws dynamodb list-tables --query "TableNames[?contains(@, 'StayPrice')]|[0]" --output text)
+          echo "table: $TABLE"
+          D="${{ inputs.date }}"
+
+          echo "── ACTUALS (checkIn=$D): listingName | amount(masked) | channel | code[0:4]"
+          aws dynamodb scan --table-name "$TABLE" \
+            --filter-expression "sk = :sk" \
+            --expression-attribute-values '{":sk":{"S":"ACTUALS"}}' \
+            --output json | jq -r --arg d "$D" '
+              .Items[].data.L[]?.M
+              | select(.checkIn.S == $d)
+              | [ (.listingName.S // "NULL"),
+                  ((.amount.N // "0") | .[0:2] + "xxxx"),
+                  (.channel.S // "?"),
+                  ((.confirmationCode.S // "-") | .[0:4]) ]
+              | @tsv'
+
+          echo ""
+          echo "── BOOKINGS (checkIn=$D): listingId | summary[0:10] | nights | source"
+          aws dynamodb scan --table-name "$TABLE" \
+            --filter-expression "sk = :sk" \
+            --expression-attribute-values '{":sk":{"S":"BOOKINGS"}}' \
+            --output json | jq -r --arg d "$D" '
+              .Items[].data.L[]?.M
+              | select(.checkIn.S == $d)
+              | [ (.listingId.S // "?"),
+                  ((.guestName.S // "?") | .[0:10]),
+                  (.nights.N // "?"),
+                  (.source.S // "?") ]
+              | @tsv'
+
+          echo ""
+          echo "── LISTINGS: id | name[0:24]"
+          aws dynamodb scan --table-name "$TABLE" \
+            --filter-expression "sk = :sk" \
+            --expression-attribute-values '{":sk":{"S":"LISTINGS"}}' \
+            --output json | jq -r '
+              .Items[].data.L[]?.M
+              | [ (.id.S // "?"), ((.name.S // "?") | .[0:24]) ]
+              | @tsv'
