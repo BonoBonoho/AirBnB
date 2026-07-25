@@ -24,14 +24,39 @@ export interface DeviceStatus {
   humidity?: number
   switch?: 'on' | 'off'
   coolingSetpoint?: number
+  /** 에어컨 운전 모드 (cool/dry/wind/auto/heat) */
+  acMode?: string
+  /** 팬 세기 (auto/low/medium/high) */
+  fanMode?: string
+  /** 현재 소비전력 (W) — 지원 기기만 */
+  power?: number
+}
+
+/** OAuth 토큰 묶음 — 액세스 토큰은 24시간, 리프레시 토큰으로 자동 갱신 */
+export interface StOauth {
+  accessToken: string
+  refreshToken: string
+  /** epoch ms */
+  expiresAt: number
 }
 
 export interface SmartHomeConfig {
-  smartthings?: { token: string }
+  smartthings?: { token?: string; oauth?: StOauth }
   tuya?: { accessId: string; accessKey: string; region: 'us' | 'eu' | 'cn' | 'in' }
 }
 
+/** 기기 사용 기록 — 15분 샘플링 기반 가동시간 + 켬/끔 이벤트 (DynamoDB 400KB 제한 때문에 집계형) */
+export interface SmartLog {
+  /** deviceId → 마지막 샘플 (가동시간 적산용) */
+  lastSample: Record<string, { sw?: string; ts: string }>
+  /** YYYY-MM-DD → deviceId → 켜져 있던 분(min) */
+  days: Record<string, Record<string, number>>
+  /** 최근 이벤트: 켬/끔/온도설정 등 */
+  events: { ts: string; d: string; ev: string; by: 'user' | 'auto' | 'sample' }[]
+}
+
 const ST = 'https://api.smartthings.com/v1'
+export const ST_SCOPES = 'r:devices:* x:devices:* r:locations:*'
 
 // ─── SmartThings ───────────────────────────────────────────────
 
@@ -47,6 +72,91 @@ async function stFetch(token: string, path: string, init?: RequestInit): Promise
   })
   if (!res.ok) throw new Error(`스마트싱스 API 오류 (${res.status})`)
   return res.json()
+}
+
+// ─── SmartThings OAuth (액세스 토큰 자동 갱신) ─────────────────
+
+export function stAuthorizeUrl(clientId: string, redirectUri: string, state: string): string {
+  const q = new URLSearchParams({
+    client_id: clientId,
+    response_type: 'code',
+    redirect_uri: redirectUri,
+    scope: ST_SCOPES,
+    state,
+  })
+  return `https://api.smartthings.com/oauth/authorize?${q.toString()}`
+}
+
+async function stTokenRequest(
+  clientId: string, clientSecret: string, params: Record<string, string>,
+): Promise<StOauth> {
+  const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64')
+  const body = new URLSearchParams({ client_id: clientId, ...params }).toString()
+  let lastErr = ''
+  // 토큰 엔드포인트가 auth-global로 이전됨 — 구 엔드포인트도 폴백으로 시도
+  for (const host of ['https://auth-global.api.smartthings.com', 'https://api.smartthings.com']) {
+    try {
+      const res = await fetch(`${host}/oauth/token`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${basic}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body,
+        signal: AbortSignal.timeout(10000),
+      })
+      const data = (await res.json()) as {
+        access_token?: string; refresh_token?: string; expires_in?: number; error?: string; error_description?: string
+      }
+      if (!res.ok || !data.access_token) {
+        lastErr = `${res.status} ${data.error_description ?? data.error ?? ''}`.trim()
+        continue
+      }
+      return {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token ?? params.refresh_token ?? '',
+        expiresAt: Date.now() + (data.expires_in ?? 86400) * 1000,
+      }
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e)
+    }
+  }
+  throw new Error(`스마트싱스 토큰 발급 실패: ${lastErr}`)
+}
+
+export function stExchangeCode(
+  clientId: string, clientSecret: string, code: string, redirectUri: string,
+): Promise<StOauth> {
+  return stTokenRequest(clientId, clientSecret, {
+    grant_type: 'authorization_code', code, redirect_uri: redirectUri,
+  })
+}
+
+export function stRefresh(clientId: string, clientSecret: string, refreshToken: string): Promise<StOauth> {
+  return stTokenRequest(clientId, clientSecret, { grant_type: 'refresh_token', refresh_token: refreshToken })
+}
+
+/**
+ * 사용할 스마트싱스 토큰 결정. OAuth 연동이면 만료 30분 전에 자동 갱신하고
+ * persist 콜백으로 새 토큰을 저장한다(리프레시 토큰은 사용 시 회전됨). 없으면 PAT 폴백.
+ */
+export async function resolveStToken(
+  st: SmartHomeConfig['smartthings'],
+  clientId: string | undefined,
+  clientSecret: string | undefined,
+  persist: (oauth: StOauth) => Promise<void>,
+): Promise<string | null> {
+  if (!st) return null
+  if (st.oauth) {
+    if (st.oauth.expiresAt - Date.now() > 30 * 60 * 1000) return st.oauth.accessToken
+    if (clientId && clientSecret) {
+      const next = await stRefresh(clientId, clientSecret, st.oauth.refreshToken)
+      await persist(next)
+      return next.accessToken
+    }
+    return st.oauth.accessToken // 갱신 불가 — 만료 임박 토큰이라도 시도
+  }
+  return st.token ?? null
 }
 
 export async function stListDevices(token: string): Promise<SmartDevice[]> {
@@ -99,6 +209,9 @@ export async function stStatus(token: string, deviceId: string): Promise<DeviceS
     components?: { main?: Record<string, Record<string, { value: unknown }>> }
   }
   const main = s.components?.main ?? {}
+  const powerRaw = main.powerConsumptionReport?.powerConsumption?.value as
+    | { power?: unknown }
+    | undefined
   return {
     deviceId,
     online: true,
@@ -106,16 +219,27 @@ export async function stStatus(token: string, deviceId: string): Promise<DeviceS
     humidity: numOrU(main.relativeHumidityMeasurement?.humidity?.value),
     switch: main.switch?.switch?.value === 'on' ? 'on' : main.switch?.switch?.value === 'off' ? 'off' : undefined,
     coolingSetpoint: numOrU(main.thermostatCoolingSetpoint?.coolingSetpoint?.value),
+    acMode: typeof main.airConditionerMode?.airConditionerMode?.value === 'string'
+      ? main.airConditionerMode.airConditionerMode.value : undefined,
+    fanMode: typeof main.airConditionerFanMode?.fanMode?.value === 'string'
+      ? main.airConditionerFanMode.fanMode.value : undefined,
+    power: powerRaw && typeof powerRaw === 'object' ? numOrU(powerRaw.power) : undefined,
   }
 }
 
+export type StCommandName = 'on' | 'off' | 'setCoolingSetpoint' | 'setAcMode' | 'setFanMode'
+
 export async function stCommand(
-  token: string, deviceId: string, command: 'on' | 'off' | 'setCoolingSetpoint', arg?: number,
+  token: string, deviceId: string, command: StCommandName, arg?: number | string,
 ): Promise<void> {
   const cmd =
     command === 'setCoolingSetpoint'
-      ? { component: 'main', capability: 'thermostatCoolingSetpoint', command: 'setCoolingSetpoint', arguments: [arg ?? 24] }
-      : { component: 'main', capability: 'switch', command }
+      ? { component: 'main', capability: 'thermostatCoolingSetpoint', command: 'setCoolingSetpoint', arguments: [Number(arg ?? 24)] }
+      : command === 'setAcMode'
+        ? { component: 'main', capability: 'airConditionerMode', command: 'setAirConditionerMode', arguments: [String(arg ?? 'cool')] }
+        : command === 'setFanMode'
+          ? { component: 'main', capability: 'airConditionerFanMode', command: 'setFanMode', arguments: [String(arg ?? 'auto')] }
+          : { component: 'main', capability: 'switch', command }
   await stFetch(token, `/devices/${deviceId}/commands`, {
     method: 'POST',
     body: JSON.stringify({ commands: [cmd] }),

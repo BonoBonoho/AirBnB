@@ -1,0 +1,16 @@
+{
+  "name": "스테이프라이스 — 숙소 수익 관리",
+  "short_name": "스테이프라이스",
+  "description": "숙소 수익 관리 · 자동 가격 · 스마트룸 제어",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#f43f5e",
+  "lang": "ko",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

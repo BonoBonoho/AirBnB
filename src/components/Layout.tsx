@@ -17,8 +17,9 @@ const NAV = [
 export default function Layout() {
   const { cloud } = useStore()
   return (
-    <div className="flex min-h-screen">
-      <aside className="w-56 shrink-0 border-r border-slate-200 bg-white flex flex-col">
+    <div className="flex min-h-screen flex-col md:flex-row">
+      {/* 데스크톱 사이드바 */}
+      <aside className="hidden md:flex w-56 shrink-0 border-r border-slate-200 bg-white flex-col">
         <div className="px-5 py-5 border-b border-slate-100">
           <div className="text-xl font-bold text-rose-500">스테이프라이스</div>
           <div className="text-xs text-slate-400 mt-0.5">숙소 수익 관리 · 자동 가격</div>
@@ -55,7 +56,38 @@ export default function Layout() {
           )}
         </div>
       </aside>
-      <main className="flex-1 min-w-0 p-6 lg:p-8">
+
+      {/* 모바일 헤더 + 가로 스크롤 탭 */}
+      <div className="md:hidden sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200"
+        style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+        <div className="flex items-center justify-between px-4 pt-3 pb-1.5">
+          <div className="text-lg font-bold text-rose-500">스테이프라이스</div>
+          {cloud && (
+            <button onClick={cloud.signOut} className="text-[11px] text-slate-400 underline">로그아웃</button>
+          )}
+        </div>
+        <nav className="flex gap-1.5 overflow-x-auto px-3 pb-2 [-webkit-overflow-scrolling:touch] [scrollbar-width:none]">
+          {NAV.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.to === '/'}
+              className={({ isActive }) =>
+                `flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors ${
+                  isActive
+                    ? 'bg-rose-500 text-white'
+                    : 'bg-slate-100 text-slate-600 active:bg-slate-200'
+                }`
+              }
+            >
+              <span>{item.icon}</span>
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+      </div>
+
+      <main className="flex-1 min-w-0 p-4 pb-10 md:p-6 lg:p-8">
         <Outlet />
       </main>
     </div>
