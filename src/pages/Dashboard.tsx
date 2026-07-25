@@ -95,6 +95,33 @@ export default function Dashboard() {
     return out
   }, [bookings, today, period])
 
+  // 숙소별 수익 (이번 달 / 올해 / 전체)
+  const [bdPeriod, setBdPeriod] = useState<'month' | 'year' | 'all'>('month')
+  const byListing = useMemo(() => {
+    const monthKey = today.slice(0, 7)
+    const yearKey = today.slice(0, 4)
+    const inPeriod = (checkIn: string) =>
+      bdPeriod === 'month' ? checkIn.slice(0, 7) === monthKey
+        : bdPeriod === 'year' ? checkIn.slice(0, 4) === yearKey
+          : true
+    const rows = new Map<string, { name: string; revenue: number; count: number; nights: number; actuals: number }>()
+    for (const b of bookings) {
+      if (b.status === 'cancelled' || !inPeriod(b.checkIn)) continue
+      const l = listings.find((x) => x.id === b.listingId)
+      const key = l ? l.id : 'unknown'
+      const name = l ? `${l.thumbnail} ${l.name}` : '🏚️ 미등록 숙소'
+      const r = rows.get(key) ?? { name, revenue: 0, count: 0, nights: 0, actuals: 0 }
+      r.revenue += b.totalPrice
+      r.count += 1
+      r.nights += b.nights
+      if (b.actual) r.actuals += 1
+      rows.set(key, r)
+    }
+    return [...rows.values()].sort((a, b) => b.revenue - a.revenue)
+  }, [bookings, listings, bdPeriod, today])
+  const bdTotal = byListing.reduce((s, r) => s + r.revenue, 0)
+  const bdMax = byListing[0]?.revenue ?? 0
+
   const upcoming = useMemo(
     () =>
       bookings
@@ -236,6 +263,56 @@ export default function Dashboard() {
           </div>
         </Card>
       </div>
+
+      <Card className="mt-4">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+          <div className="font-semibold">
+            🏠 숙소별 수익 <span className="text-xs font-normal text-slate-400">(체크인 기준)</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-sm">합계 <b className="text-rose-600">{formatKRW(bdTotal)}</b></span>
+            <div className="flex rounded-lg bg-slate-100 p-0.5 text-xs font-medium">
+              {([['month', '이번 달'], ['year', '올해'], ['all', '전체']] as const).map(([k, label]) => (
+                <button
+                  key={k}
+                  onClick={() => setBdPeriod(k)}
+                  className={`rounded-md px-3 py-1.5 transition-colors ${
+                    bdPeriod === k ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        {byListing.length === 0 ? (
+          <p className="text-sm text-slate-400">해당 기간의 예약이 없습니다.</p>
+        ) : (
+          <div className="space-y-3">
+            {byListing.map((r) => (
+              <div key={r.name}>
+                <div className="flex items-center justify-between text-sm mb-1">
+                  <span className="truncate max-w-[55%] font-medium">{r.name}</span>
+                  <span className="shrink-0">
+                    <span className="text-xs text-slate-400 mr-2">{r.count}건 · {r.nights}박{r.actuals > 0 ? ` · 실측 ${r.actuals}` : ''}</span>
+                    <b>{formatKRW(r.revenue)}</b>
+                    <span className="text-xs text-slate-400 ml-1.5">
+                      {bdTotal > 0 ? `${Math.round((r.revenue / bdTotal) * 100)}%` : ''}
+                    </span>
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-rose-400"
+                    style={{ width: bdMax > 0 ? `${Math.max(2, (r.revenue / bdMax) * 100)}%` : '0%' }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   )
 }
