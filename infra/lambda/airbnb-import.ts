@@ -70,8 +70,44 @@ function docTitle(html: string): string | null {
  * 진짜 제목이 아니라면 다른 소스를 찾아야 한다.
  */
 export function isGenericSummary(s: string): boolean {
+  if (isSiteTagline(s)) return true
   if (/·/.test(s) && /(침실|침대|욕실|게스트|★)/.test(s)) return true
   return /^(집|아파트|한국의 집|주택|공동주택|호텔|펜션|별장|타운하우스)\s*[·인(]/.test(s)
+}
+
+/** 숙소 제목이 아니라 에어비앤비 사이트 공용 문구 ("에어비앤비: 휴가용 임대 숙소, …") */
+export function isSiteTagline(s: string): boolean {
+  return /^(에어비앤비|airbnb)\s*[:：]/i.test(s) || /휴가용\s*임대\s*숙소|vacation\s*rentals/i.test(s)
+}
+
+/**
+ * 문서 제목/og:title이 전부 요약문·공용 문구일 때 임베드 JSON에서 실제 제목을 찾는다.
+ * listingTitle/seoTitle 키를 우선하고, 잡음(호스트명·후기 등)을 걸러내기 위해
+ * 여러 번 등장하는 후보를 고른다.
+ */
+function bestJsonTitle(html: string): string | null {
+  const tiers = [
+    /"(?:listingTitle|seoTitle)"\s*:\s*"((?:[^"\\]|\\.){5,300})"/g,
+    /"(?:title|name)"\s*:\s*"((?:[^"\\]|\\.){5,300})"/g,
+  ]
+  for (const re of tiers) {
+    const found: string[] = []
+    let m: RegExpExecArray | null
+    while ((m = re.exec(html)) !== null && found.length < 200) {
+      try {
+        found.push(JSON.parse(`"${m[1]}"`) as string)
+      } catch { /* 깨진 이스케이프 무시 */ }
+    }
+    const good = found
+      .map((s) => cleanTitle(s.trim()))
+      .filter((s): s is string => !!s && s.length >= 6 && s.length <= 150 && !isGenericSummary(s))
+    if (good.length) {
+      const count = new Map<string, number>()
+      for (const g of good) count.set(g, (count.get(g) ?? 0) + 1)
+      return [...count.entries()].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)[0][0]
+    }
+  }
+  return null
 }
 
 /**
@@ -83,7 +119,12 @@ function resolveFullTitle(ogTitle: string | null, html: string): string | null {
     .map((t) => (t ? cleanTitle(t) : null))
     .filter((t): t is string => !!t && t.length >= 4)
 
-  const best = candidates.find((c) => !isGenericSummary(c)) ?? candidates[0] ?? null
+  const best =
+    candidates.find((c) => !isGenericSummary(c)) ??
+    bestJsonTitle(html) ??
+    // 마지막 폴백: 요약문은 그나마 정보가 있으니 허용하되, 사이트 공용 문구는 제외
+    candidates.find((c) => !isSiteTagline(c)) ??
+    null
   if (!best) return null
 
   // 말줄임으로 잘렸으면 임베드 JSON에서 같은 접두사의 더 긴 원본을 찾는다

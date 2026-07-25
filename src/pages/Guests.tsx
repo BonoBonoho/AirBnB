@@ -189,7 +189,13 @@ export default function Guests() {
                 </div>
                 <div className="mt-1.5 text-xs text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5">
                   <span>📅 {fmtDate(b.checkIn)} ~ {fmtDate(checkOut(b))} · {b.nights}박</span>
-                  {listing && <span className="truncate max-w-60">🏠 {listing.name}</span>}
+                  {listing ? (
+                    <span className="truncate max-w-60">🏠 {listing.name}</span>
+                  ) : b.srcListingName ? (
+                    <span className="truncate max-w-60 text-amber-600" title="숙소 관리에서 이 숙소를 등록하면 자동으로 연결됩니다">
+                      🏠 {b.srcListingName} <b>(미등록)</b>
+                    </span>
+                  ) : null}
                 </div>
 
                 {cloud && (

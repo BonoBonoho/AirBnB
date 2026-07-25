@@ -112,12 +112,23 @@ function applyActuals(bookings: Booking[], actuals: ActualPayout[], listings: Li
           norm(a.listingName as string).includes(norm(l.name).slice(0, 10)) ||
           norm(l.name).includes(norm(a.listingName as string).slice(0, 10)),
       )
-      if (found) return found
+      // 숙소명이 있는데 등록 숙소와 안 맞으면 첫 숙소에 몰아넣지 않고 '미등록'으로 분류
+      return found
     }
     return listings[0]
   }
 
+  // iCal 예약의 자리표시 이름("Reserved" 등)은 메일에서 찾은 실제 게스트명으로 교체
+  const isPlaceholderName = (name: string) => /^reserved$|^airbnb|^booking|게스트$/i.test(name.trim())
+  const applyMatch = (b: Booking, a: ActualPayout): Booking => ({
+    ...b,
+    totalPrice: a.amount,
+    actual: true,
+    guestName: a.guestName && isPlaceholderName(b.guestName) ? a.guestName : b.guestName,
+  })
+
   const usedActualIds = new Set<string>()
+  // 1차: 체크인 날짜 + 숙소 이름 유사도로 매칭
   const merged = bookings.map((b) => {
     const match = actuals.find((a) => {
       if (usedActualIds.has(a.id) || !a.checkIn || a.checkIn !== b.checkIn) return false
@@ -128,17 +139,18 @@ function applyActuals(bookings: Booking[], actuals: ActualPayout[], listings: Li
     })
     if (!match) return b
     usedActualIds.add(match.id)
-    return { ...b, totalPrice: match.amount, actual: true }
+    return applyMatch(b, match)
   })
 
-  // 미매칭 정산 내역 → 독립 예약으로 추가 (과거 매출 백필)
+  // 2차: 미매칭 정산 내역 → 독립 예약으로 추가 (iCal에 없는 과거 매출·미등록 숙소 백필)
   for (const a of actuals) {
     if (usedActualIds.has(a.id) || !a.checkIn) continue
     const listing = matchListing(a)
-    if (!listing) continue
+    if (!listing && !a.listingName) continue
     merged.push({
       id: `actual-${a.id}`,
-      listingId: listing.id,
+      listingId: listing?.id ?? 'unknown',
+      srcListingName: listing ? undefined : (a.listingName ?? undefined),
       guestName: a.guestName ?? (a.channel === 'booking' ? 'Booking.com 게스트' : 'Airbnb 게스트'),
       channel: a.channel ?? 'airbnb',
       checkIn: a.checkIn,
