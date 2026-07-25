@@ -121,6 +121,8 @@ export interface Booking {
   source?: 'ical' | 'mock'
   /** true = 정산 메일에서 가져온 실제 금액이 반영됨 */
   actual?: boolean
+  /** 등록 숙소와 매칭 실패 시 메일에 적힌 숙소명 (미등록 숙소 표시용) */
+  srcListingName?: string
 }
 
 /** 정산 메일에서 파싱한 실제 정산 내역 */

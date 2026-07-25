@@ -17,6 +17,8 @@ const EMPTY_FORM = {
   basePrice: 100000,
   photoUrl: '',
   airbnbRoomId: '',
+  icalUrl: '',
+  bookingIcalUrl: '',
 }
 
 function AddListingForm({ onDone }: { onDone: () => void }) {
@@ -64,6 +66,8 @@ function AddListingForm({ onDone }: { onDone: () => void }) {
       thumbnail: form.thumbnail,
       photoUrl: form.photoUrl || undefined,
       airbnbRoomId: form.airbnbRoomId || undefined,
+      icalUrl: form.icalUrl.trim() || undefined,
+      bookingIcalUrl: form.bookingIcalUrl.trim() || undefined,
       channels: ['airbnb'],
       active: true,
       rules: {
@@ -195,6 +199,26 @@ function AddListingForm({ onDone }: { onDone: () => void }) {
               </button>
             ))}
           </div>
+        </div>
+        <div className="md:col-span-2">
+          <label className="text-sm font-medium">📅 예약 캘린더 연동 (iCal, 선택)</label>
+          <p className="text-[11px] text-slate-400 mt-0.5 mb-1.5">
+            에어비앤비: 호스트 달력 → 가용성 → 캘린더 연결 → <b>캘린더 내보내기</b> 주소 붙여넣기 — 등록 즉시 예약이 동기화됩니다 (6시간마다 자동 갱신)
+          </p>
+          <input
+            type="url"
+            value={form.icalUrl}
+            onChange={(e) => setForm({ ...form, icalUrl: e.target.value })}
+            placeholder="에어비앤비 iCal 주소 (https://www.airbnb.co.kr/calendar/ical/…)"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono text-xs"
+          />
+          <input
+            type="url"
+            value={form.bookingIcalUrl}
+            onChange={(e) => setForm({ ...form, bookingIcalUrl: e.target.value })}
+            placeholder="부킹닷컴 iCal 주소 (선택)"
+            className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono text-xs"
+          />
         </div>
       </div>
       <div className="flex gap-2 mt-5">
