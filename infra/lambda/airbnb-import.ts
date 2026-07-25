@@ -59,20 +59,41 @@ function jsonTitleCandidates(html: string): string[] {
   return out
 }
 
+/** 문서 <title> 태그 추출 */
+function docTitle(html: string): string | null {
+  const m = html.match(/<title[^>]*>([^<]{4,300})<\/title>/i)
+  return m ? decodeEntities(m[1]).trim() : null
+}
+
 /**
- * og:title을 기본으로 쓰되, 말줄임(…)으로 잘렸거나 더 긴 원본이 임베드 JSON에 있으면
- * 그쪽을 선택해 사용자가 지은 제목을 그대로 반환한다.
+ * 에어비앤비가 og:title에 숙소명 대신 넣는 요약문("집 · 부산 · ★신규 · 침실 4개 …") 판별.
+ * 진짜 제목이 아니라면 다른 소스를 찾아야 한다.
+ */
+export function isGenericSummary(s: string): boolean {
+  if (/·/.test(s) && /(침실|침대|욕실|게스트|★)/.test(s)) return true
+  return /^(집|아파트|한국의 집|주택|공동주택|호텔|펜션|별장|타운하우스)\s*[·인(]/.test(s)
+}
+
+/**
+ * 숙소 제목 결정: 문서 <title>(가장 신뢰) → og:title 순으로 보되 요약문은 거르고,
+ * 말줄임(…)으로 잘린 경우 임베드 JSON에서 전체 제목을 복원한다.
  */
 function resolveFullTitle(ogTitle: string | null, html: string): string | null {
-  const cleaned = ogTitle ? cleanTitle(ogTitle) : null
-  if (!cleaned) return null
-  const prefix = cleaned.replace(/[…⋯.]+\s*$/u, '').slice(0, 15)
-  if (prefix.length < 5) return cleaned
-  const better = jsonTitleCandidates(html)
+  const candidates = [docTitle(html), ogTitle]
+    .map((t) => (t ? cleanTitle(t) : null))
+    .filter((t): t is string => !!t && t.length >= 4)
+
+  const best = candidates.find((c) => !isGenericSummary(c)) ?? candidates[0] ?? null
+  if (!best) return null
+
+  // 말줄임으로 잘렸으면 임베드 JSON에서 같은 접두사의 더 긴 원본을 찾는다
+  const prefix = best.replace(/[…⋯.]+\s*$/u, '').slice(0, 15)
+  if (prefix.length < 5) return best
+  const longer = jsonTitleCandidates(html)
     .map((c) => c.trim())
-    .filter((c) => c.startsWith(prefix) && c.length >= cleaned.replace(/[…⋯]+\s*$/u, '').length)
+    .filter((c) => c.startsWith(prefix) && c.length >= best.replace(/[…⋯]+\s*$/u, '').length)
     .sort((a, b) => b.length - a.length)[0]
-  return better ?? cleaned
+  return longer ?? best
 }
 
 function firstNumber(patterns: RegExp[], ...sources: (string | null)[]): number | null {
@@ -126,7 +147,10 @@ export async function fetchAirbnbListing(url: string): Promise<ImportedListing> 
     ogDesc, ogTitle, html,
   )
   const maxGuests = firstNumber(
-    [/(?:최대\s*)?인원\s*(\d+)\s*명/, /(\d+)\s*guests?/i, /"personCapacity"\s*:\s*(\d+)/, /"person_capacity"\s*:\s*(\d+)/],
+    [
+      /(?:최대\s*)?인원\s*(\d+)\s*명/, /게스트\s*(\d+)\s*명/, /(\d+)\s*guests?/i,
+      /"personCapacity"\s*:\s*(\d+)/, /"person_capacity"\s*:\s*(\d+)/,
+    ],
     ogDesc, ogTitle, html,
   )
 
