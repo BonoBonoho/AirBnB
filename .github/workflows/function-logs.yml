@@ -1,0 +1,46 @@
+name: Dump Lambda logs
+
+# 진단용: 이름에 특정 문자열이 포함된 Lambda 로그 그룹의 최근 로그를 출력한다.
+on:
+  workflow_dispatch:
+    inputs:
+      match:
+        description: 'Log group name substring (e.g. BackfillFn, ApiFn, AutomationFn)'
+        required: true
+        default: 'BackfillFn'
+      minutes:
+        description: 'How many minutes back'
+        required: false
+        default: '90'
+      region:
+        description: 'AWS region'
+        required: false
+        default: 'ap-northeast-2'
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - name: Find matching log groups and dump recent events
+        run: |
+          LGS=$(aws logs describe-log-groups \
+            --query "logGroups[?contains(logGroupName, '${{ inputs.match }}')].logGroupName" \
+            --output text)
+          if [ -z "$LGS" ]; then
+            echo "no log group matched '${{ inputs.match }}'"
+            exit 0
+          fi
+          START=$(( ($(date +%s) - ${{ inputs.minutes }} * 60) * 1000 ))
+          for G in $LGS; do
+            echo "════════ $G ════════"
+            aws logs filter-log-events \
+              --log-group-name "$G" \
+              --start-time "$START" \
+              --query 'events[].message' \
+              --output text | tail -c 60000 || true
+            echo ""
+          done
