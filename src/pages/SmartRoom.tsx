@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useStore } from '../lib/store'
 import { Card, PageTitle } from '../components/ui'
-import type { SmartHomeState, SmartDevice, SmartDeviceStatus, SmartLog, SmartScene, SmartSchedule } from '../lib/api'
+import type { SmartHomeState, SmartDevice, SmartDeviceStatus, SmartLog, SmartScene, SmartSchedule, SmartCommandName, TeamMember } from '../lib/api'
 
 const EMPTY: SmartHomeState = { config: {}, devices: [], rules: {} }
 
@@ -51,6 +51,9 @@ function eventLabel(ev: string): string {
   if (ev.startsWith('temp:')) return `온도 ${ev.slice(5)}°설정`
   if (ev.startsWith('mode:')) return `${modeLabel(ev.slice(5))} 모드`
   if (ev.startsWith('fan:')) return `팬 ${fanLabel(ev.slice(4))}`
+  if (ev.startsWith('vol:')) return `볼륨 ${ev.slice(4)}`
+  if (ev === 'mute') return '음소거'
+  if (ev === 'unmute') return '음소거 해제'
   return ev
 }
 
@@ -83,6 +86,12 @@ export default function SmartRoom() {
   const [editZone, setEditZone] = useState('')
   const [sceneEdit, setSceneEdit] = useState(false)
   const [sceneMsg, setSceneMsg] = useState('')
+  const [dropTarget, setDropTarget] = useState('')
+  const [extraZones, setExtraZones] = useState<{ spaceId: string; name: string }[]>([])
+  const [famList, setFamList] = useState<TeamMember[] | null>(null)
+  const [famEmail, setFamEmail] = useState('')
+  const [famBusy, setFamBusy] = useState(false)
+  const [famMsg, setFamMsg] = useState('')
   // 연동·기기 배정 섹션 — 설정이 끝난 계정은 기본 접힘 (운영 화면 깔끔하게)
   const [showSetup, setShowSetup] = useState(false)
 
@@ -107,6 +116,13 @@ export default function SmartRoom() {
       if (s.devices?.length) refreshStatus()
     }).catch(() => setLoaded(true))
   }, [cloud, refreshStatus])
+
+  // 집 모드 소유자: 가족(팀) 목록 로드 — 초대 카드용
+  useEffect(() => {
+    if (mode === 'home' && cloud && cloud.perms === 'owner') {
+      cloud.team.get().then((r) => setFamList(r.members)).catch(() => {})
+    }
+  }, [mode, cloud])
 
   // 스마트싱스 OAuth 콜백 결과 (?st=connected 등)
   useEffect(() => {
@@ -272,7 +288,7 @@ export default function SmartRoom() {
     setState((p) => ({ ...p, rules }))
   }
 
-  const command = async (d: SmartDevice, cmd: 'on' | 'off' | 'setCoolingSetpoint' | 'setAcMode' | 'setFanMode', arg?: number | string) => {
+  const command = async (d: SmartDevice, cmd: SmartCommandName, arg?: number | string) => {
     setBusy(d.deviceId)
     try {
       await cloud.smart.command({ provider: d.provider, deviceId: d.deviceId, command: cmd, arg })
@@ -285,6 +301,9 @@ export default function SmartRoom() {
         if (cmd === 'setCoolingSetpoint') next.coolingSetpoint = Number(arg)
         if (cmd === 'setAcMode') next.acMode = String(arg)
         if (cmd === 'setFanMode') next.fanMode = String(arg)
+        if (cmd === 'setVolume') next.volume = Number(arg)
+        if (cmd === 'mute') next.mute = true
+        if (cmd === 'unmute') next.mute = false
         return { ...p, [d.deviceId]: next }
       })
       setTimeout(refreshStatus, 1500)
@@ -293,6 +312,40 @@ export default function SmartRoom() {
     } finally {
       setBusy('')
     }
+  }
+
+  /** 드래그앤드랍으로 기기를 다른 공간(또는 다른 숙소)으로 이동 */
+  const moveDevice = async (deviceId: string, listingId: string, zone: string) => {
+    const dev = state.devices.find((x) => x.deviceId === deviceId)
+    if (!dev || (dev.listingId === listingId && (dev.zone?.trim() || '') === zone)) return
+    await updateDevice(deviceId, { zone: zone || undefined, listingId })
+  }
+
+  const inviteFamily = async () => {
+    const email = famEmail.trim().toLowerCase()
+    if (!/.+@.+\..+/.test(email)) { setFamMsg('올바른 이메일을 입력해 주세요'); return }
+    setFamBusy(true)
+    setFamMsg('')
+    try {
+      const members = [
+        ...(famList ?? []).filter((m) => m.email !== email),
+        { email, perms: { smart: true }, invitedAt: new Date().toISOString() },
+      ]
+      await cloud.team.put(members)
+      setFamList(members)
+      setFamEmail('')
+      setFamMsg('✓ 초대 완료 — 같은 이메일로 가입 후 로그인하면 됩니다')
+    } catch (e) {
+      setFamMsg(e instanceof Error ? e.message : '초대 실패')
+    } finally {
+      setFamBusy(false)
+    }
+  }
+
+  const removeFamily = async (email: string) => {
+    const members = (famList ?? []).filter((m) => m.email !== email)
+    await cloud.team.put(members).catch(() => setFamMsg('해제 실패'))
+    setFamList(members)
   }
 
   const connected = !!(state.config.smartthings || state.config.tuya || state.config.hejhome)
@@ -349,6 +402,7 @@ export default function SmartRoom() {
     if (isOn && s?.fanMode) chips.push(`🌀 팬 ${fanLabel(s.fanMode)}`)
     if (isOn && s?.power !== undefined && s.power > 0) chips.push(`⚡ ${Math.round(s.power)}W`)
     if (s?.energy !== undefined && s.energy > 0) chips.push(`🔋 누적 ${s.energy.toFixed(1)}kWh`)
+    if (isOn && s?.volume !== undefined) chips.push(s.mute ? '🔇 음소거' : `🔊 ${s.volume}`)
     if (s && !s.online) chips.push('오프라인')
 
     const canSwitch = d.caps.includes('switch') || d.caps.includes('ac')
@@ -356,7 +410,15 @@ export default function SmartRoom() {
     const sp = s?.coolingSetpoint
 
     return (
-      <div key={d.deviceId} className={`rounded-2xl border px-3.5 py-3 text-sm transition-colors ${isOn ? 'border-emerald-200 bg-emerald-50/40' : 'border-slate-200'}`}>
+      <div
+        key={d.deviceId}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData('text/plain', d.deviceId)
+          e.dataTransfer.effectAllowed = 'move'
+        }}
+        className={`rounded-2xl border px-3.5 py-3 text-sm transition-colors md:cursor-grab ${isOn ? 'border-emerald-200 bg-emerald-50/40' : 'border-slate-200'}`}
+      >
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0 truncate">
             <span className={`inline-block w-2 h-2 rounded-full mr-1.5 align-middle ${isOn ? 'bg-emerald-500' : s?.switch === 'off' ? 'bg-slate-300' : 'bg-slate-200'}`} />
@@ -410,6 +472,20 @@ export default function SmartRoom() {
                 </button>
               ))}
             </div>
+          </div>
+        )}
+        {d.caps.includes('volume') && isOn && (
+          <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] text-slate-500 w-8">볼륨</span>
+            <button onClick={() => command(d, 'setVolume', Math.max(0, (s?.volume ?? 10) - 5))} disabled={isBusy}
+              className="w-9 h-9 rounded-xl border border-slate-300 bg-white text-lg font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">−</button>
+            <span className="w-10 text-center font-bold text-base">{s?.mute ? '🔇' : s?.volume ?? '—'}</span>
+            <button onClick={() => command(d, 'setVolume', Math.min(100, (s?.volume ?? 10) + 5))} disabled={isBusy}
+              className="w-9 h-9 rounded-xl border border-slate-300 bg-white text-lg font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">+</button>
+            <button onClick={() => command(d, s?.mute ? 'unmute' : 'mute')} disabled={isBusy}
+              className={`rounded-lg px-2.5 py-1.5 text-xs font-medium border disabled:opacity-40 ${s?.mute ? 'bg-slate-600 border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+              {s?.mute ? '🔊 음소거 해제' : '🔇 음소거'}
+            </button>
           </div>
         )}
         {log && (
@@ -721,6 +797,46 @@ export default function SmartRoom() {
         </Card>
       )}
 
+      {mode === 'home' && cloud.perms === 'owner' && (
+        <Card className="mb-4">
+          <div className="font-semibold mb-1">👨‍👩‍👧 가족 초대</div>
+          <p className="text-xs text-slate-400 mb-2 leading-relaxed">
+            초대한 가족이 stayprice.co에 <b>같은 이메일로 가입</b> 후 로그인 → <b>집 모드</b> 선택 →
+            상단에서 "회원님의 집"을 고르면 함께 기기를 제어할 수 있어요 (스마트홈 기능만 보입니다).
+          </p>
+          <div className="flex gap-2">
+            <input
+              value={famEmail}
+              onChange={(e) => setFamEmail(e.target.value)}
+              placeholder="가족 이메일 (예: family@gmail.com)"
+              className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            />
+            <button onClick={inviteFamily} disabled={famBusy || !famEmail.trim()}
+              className="rounded-lg bg-indigo-500 text-white px-4 py-2 text-sm font-semibold hover:bg-indigo-600 disabled:opacity-50">
+              {famBusy ? '초대 중…' : '초대'}
+            </button>
+          </div>
+          {famMsg && (
+            <p className={`text-xs mt-1.5 ${famMsg.startsWith('✓') ? 'text-emerald-600' : 'text-amber-600'}`}>{famMsg}</p>
+          )}
+          {(famList ?? []).length > 0 && (
+            <div className="mt-2.5 space-y-1">
+              {(famList ?? []).map((m) => (
+                <div key={m.email} className="flex items-center justify-between gap-2 text-xs rounded-lg bg-slate-50 px-2.5 py-1.5">
+                  <span className="truncate">
+                    {m.email}
+                    <span className="ml-1.5 text-slate-400">
+                      {m.perms.pricing || m.perms.channels || m.perms.guest ? '(공동 호스트)' : '(가족·스마트홈)'}
+                    </span>
+                  </span>
+                  <button onClick={() => removeFamily(m.email)} className="text-rose-500 shrink-0 hover:underline">해제</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
       {[
         // 집 모드에서는 숙소 카드를 감추고 우리집만 표시
         ...(mode === 'home' ? [] : listings.filter((l) => l.active).map((l) => ({ id: l.id, name: l.name, thumbnail: l.thumbnail, isHome: false }))),
@@ -744,27 +860,59 @@ export default function SmartRoom() {
               </div>
             </div>
             <div className="space-y-3 mb-2">
-              {[...new Set(devices.map((d) => d.zone?.trim() || ''))]
+              {[...new Set([
+                ...devices.map((d) => d.zone?.trim() || ''),
+                ...extraZones.filter((x) => x.spaceId === l.id).map((x) => x.name),
+              ])]
                 .sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b, 'ko')))
                 .map((zone) => {
                   const zoneDevices = devices.filter((d) => (d.zone?.trim() || '') === zone)
                   const showHeader = zone !== '' || zoneDevices.length !== devices.length
+                  const dropKey = `${l.id}|${zone}`
                   return (
-                    <div key={zone || '_none'}>
+                    <div
+                      key={zone || '_none'}
+                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropTarget(dropKey) }}
+                      onDragLeave={() => setDropTarget((p) => (p === dropKey ? '' : p))}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        setDropTarget('')
+                        const id = e.dataTransfer.getData('text/plain')
+                        if (id) moveDevice(id, l.id, zone)
+                      }}
+                      className={`rounded-xl transition-all ${dropTarget === dropKey ? 'ring-2 ring-indigo-400 bg-indigo-50/50 p-1 -m-1' : ''}`}
+                    >
                       {showHeader && (
                         <div className="text-xs font-semibold text-slate-500 mb-1.5">
                           {zone ? `🚪 ${zone}` : '공간 미지정'}
                           <span className="font-normal text-slate-400 ml-1">({zoneDevices.length})</span>
                         </div>
                       )}
-                      <div className="grid md:grid-cols-2 gap-2">{zoneDevices.map(renderDevice)}</div>
+                      {zoneDevices.length > 0 ? (
+                        <div className="grid md:grid-cols-2 gap-2">{zoneDevices.map(renderDevice)}</div>
+                      ) : (
+                        <div className="rounded-xl border border-dashed border-slate-300 px-3 py-4 text-center text-[11px] text-slate-400">
+                          기기를 여기로 드래그하세요
+                        </div>
+                      )}
                     </div>
                   )
                 })}
             </div>
-            <p className="text-[11px] text-slate-400 mb-3">
-              ✏️를 눌러 기기 별칭과 공간(거실·안방·2층 등)을 지정하면 공간별로 묶어서 보여드려요.
-            </p>
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
+              <button
+                onClick={() => {
+                  const name = window.prompt('새 공간 이름 (예: 주방, 2층, 테라스)')?.trim()
+                  if (name) setExtraZones((p) => [...p, { spaceId: l.id, name }])
+                }}
+                className="rounded-lg border border-dashed border-slate-300 px-2.5 py-1 text-[11px] text-slate-500 hover:bg-slate-50"
+              >
+                ＋ 새 공간
+              </button>
+              <p className="text-[11px] text-slate-400">
+                기기 카드를 드래그해서 공간으로 옮기거나, ✏️로 별칭·공간을 직접 지정할 수 있어요.
+              </p>
+            </div>
 
             <button
               onClick={() => setShowHistory((p) => ({ ...p, [l.id]: !p[l.id] }))}

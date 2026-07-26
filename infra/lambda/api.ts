@@ -495,7 +495,7 @@ export async function handler(
     if (path === '/api/smarthome/command' && method === 'POST') {
       if (!can('smart')) return json(403, { error: '기기 제어 권한이 없습니다. 소유자에게 요청하세요.' })
       const { provider, deviceId, command, arg } = JSON.parse(event.body ?? '{}')
-      const ALLOWED: StCommandName[] = ['on', 'off', 'setCoolingSetpoint', 'setAcMode', 'setFanMode']
+      const ALLOWED: StCommandName[] = ['on', 'off', 'setCoolingSetpoint', 'setAcMode', 'setFanMode', 'setVolume', 'mute', 'unmute']
       if (!ALLOWED.includes(command)) return json(400, { error: '지원하지 않는 명령입니다' })
       const smart = await getDoc<SmartDoc>(sub, 'SMARTHOME')
       if (!smart?.config) return json(400, { error: '스마트홈 연동이 설정되지 않았습니다' })
@@ -517,9 +517,10 @@ export async function handler(
         }
         // 사용 기록에 남기기
         const log = (await getDoc<SmartLog>(sub, 'SMARTLOG')) ?? { lastSample: {}, days: {}, events: [] }
-        const ev = command === 'on' || command === 'off' ? command
+        const ev = command === 'on' || command === 'off' || command === 'mute' || command === 'unmute' ? command
           : command === 'setCoolingSetpoint' ? `temp:${arg}`
-            : command === 'setAcMode' ? `mode:${arg}` : `fan:${arg}`
+            : command === 'setAcMode' ? `mode:${arg}`
+              : command === 'setVolume' ? `vol:${arg}` : `fan:${arg}`
         log.events.unshift({ ts: new Date().toISOString(), d: String(deviceId), ev, by: 'user' })
         log.events = log.events.slice(0, 300)
         await putDoc(sub, 'SMARTLOG', log)
