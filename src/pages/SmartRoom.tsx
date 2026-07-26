@@ -75,6 +75,8 @@ export default function SmartRoom() {
   const [editId, setEditId] = useState('')
   const [editAlias, setEditAlias] = useState('')
   const [editZone, setEditZone] = useState('')
+  // 연동·기기 배정 섹션 — 설정이 끝난 계정은 기본 접힘 (운영 화면 깔끔하게)
+  const [showSetup, setShowSetup] = useState(false)
 
   const refreshStatus = useCallback(() => {
     if (!cloud) return
@@ -92,6 +94,8 @@ export default function SmartRoom() {
       setState({ ...EMPTY, ...s })
       setAvailable(s.available ?? [])
       setLoaded(true)
+      // 아직 연동 전이거나 배정된 기기가 없으면 설정 섹션을 펼쳐서 시작
+      setShowSetup(!(s.config?.smartthings || s.config?.tuya) || !(s.devices?.length))
       if (s.devices?.length) refreshStatus()
     }).catch(() => setLoaded(true))
   }, [cloud, refreshStatus])
@@ -104,6 +108,7 @@ export default function SmartRoom() {
     else if (st === 'expired') setMsg('연동 링크가 만료되었습니다. 다시 시도해 주세요.')
     else if (st === 'noapp') setMsg('서비스에 OAuth 앱이 등록되지 않았습니다.')
     else setMsg('삼성 계정 연동에 실패했습니다. 다시 시도해 주세요.')
+    setShowSetup(true)
     navigate('/smartroom', { replace: true })
   }, [location.search, navigate])
 
@@ -342,11 +347,23 @@ export default function SmartRoom() {
 
   return (
     <div>
-      <PageTitle title="스마트룸" desc="객실 온도 모니터링 + 조명·에어컨 제어 + 예약 연동 자동화" />
+      <div className="flex items-start justify-between gap-3">
+        <PageTitle title="스마트룸" desc="객실 온도 모니터링 + 조명·에어컨 제어 + 예약 연동 자동화" />
+        <button
+          onClick={() => setShowSetup(!showSetup)}
+          className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+            showSetup ? 'border-slate-400 bg-slate-100 text-slate-700' : 'border-slate-300 bg-white text-slate-500 hover:bg-slate-50'
+          }`}
+        >
+          ⚙️ 연동 설정{showSetup ? ' ▴' : ' ▾'}
+        </button>
+      </div>
       <datalist id="zone-suggest">
         {zoneSuggest.map((z) => <option key={z} value={z} />)}
       </datalist>
 
+      {showSetup && (
+      <>
       <Card className="mb-4">
         <div className="font-semibold mb-3">🔌 계정 연동</div>
         <div className="grid md:grid-cols-2 gap-4">
@@ -452,6 +469,8 @@ export default function SmartRoom() {
             })}
           </div>
         </Card>
+      )}
+      </>
       )}
 
       {listings.filter((l) => l.active).map((l) => {
