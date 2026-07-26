@@ -228,6 +228,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<AppConfig | null | undefined>(undefined)
   const [authed, setAuthed] = useState(false)
   const [remoteLoaded, setRemoteLoaded] = useState(false)
+  const [loadError, setLoadError] = useState('')
 
   const [listings, setListings] = useState<Listing[]>(() => load(LS_LISTINGS, DEFAULT_LISTINGS))
   const [overrides, setOverrides] = useState<PriceOverride[]>(() => load(LS_OVERRIDES, []))
@@ -296,7 +297,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setGuestNotes(state.guestNotes ?? {})
         setRemoteLoaded(true)
       })
-      .catch(console.error)
+      .catch((e) => {
+        console.error(e)
+        setLoadError(e instanceof Error ? e.message : String(e))
+      })
   }, [config, authed])
 
   // 3) 저장: 데모 모드 → localStorage, 클라우드 모드 → API (800ms 디바운스)
@@ -445,6 +449,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return <Login onLogin={() => setAuthed(true)} />
   }
   if (config && !remoteLoaded) {
+    if (loadError) {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center gap-3 px-6 text-center">
+          <div className="text-2xl">😵</div>
+          <div className="font-semibold">데이터를 불러오지 못했습니다</div>
+          <p className="text-sm text-slate-500 max-w-md">{loadError}</p>
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={() => window.location.reload()}
+              className="rounded-lg bg-rose-500 text-white px-4 py-2 text-sm font-semibold"
+            >
+              다시 시도
+            </button>
+            {wsCurrent && (
+              <button
+                onClick={() => {
+                  localStorage.removeItem(LS_WORKSPACE)
+                  setApiWorkspace(null)
+                  window.location.reload()
+                }}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm"
+              >
+                내 숙소로 돌아가기
+              </button>
+            )}
+          </div>
+        </div>
+      )
+    }
     return <div className="min-h-screen flex items-center justify-center text-slate-400">데이터 동기화 중…</div>
   }
   return <StoreContext.Provider value={store}>{children}</StoreContext.Provider>

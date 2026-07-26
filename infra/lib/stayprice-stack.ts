@@ -81,7 +81,7 @@ export class StayPriceStack extends Stack {
     const httpApi = new apigwv2.HttpApi(this, 'HttpApi', {
       corsPreflight: {
         allowOrigins: ['*'],
-        allowHeaders: ['Authorization', 'Content-Type'],
+        allowHeaders: ['Authorization', 'Content-Type', 'x-workspace'],
         allowMethods: [
           apigwv2.CorsHttpMethod.GET,
           apigwv2.CorsHttpMethod.PUT,
