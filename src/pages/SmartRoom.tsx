@@ -80,6 +80,20 @@ function eventLabel(ev: string): string {
 
 const BY_LABEL = { user: '앱', auto: '자동화', sample: '감지' } as const
 
+/** 재조회한 기기 정보(기능·방·모델)를 배정된 기기 목록에 병합 */
+function mergeFreshDevices(current: SmartDevice[], fresh: SmartDevice[]): { devices: SmartDevice[]; changed: boolean } {
+  const byId = new Map(fresh.map((f) => [f.deviceId, f]))
+  let changed = false
+  const devices = current.map((d) => {
+    const f = byId.get(d.deviceId)
+    if (!f) return d
+    const next = { ...d, caps: f.caps, room: f.room, model: f.model, name: f.name }
+    if (JSON.stringify(next) !== JSON.stringify(d)) changed = true
+    return next
+  })
+  return { devices, changed }
+}
+
 export default function SmartRoom() {
   const { listings, cloud, mode } = useStore()
   const location = useLocation()
@@ -131,7 +145,18 @@ export default function SmartRoom() {
       setLoaded(true)
       // 아직 연동 전이거나 배정된 기기가 없으면 설정 섹션을 펼쳐서 시작
       setShowSetup(!(s.config?.smartthings || s.config?.tuya || s.config?.hejhome) || !(s.devices?.length))
-      if (s.devices?.length) refreshStatus()
+      if (s.devices?.length) {
+        refreshStatus()
+        // 백그라운드로 기능 목록 최신화 — 드라이버가 새 기능을 감지하면 배정 기기에도 반영
+        cloud.smart.listDevices().then(async (r) => {
+          setAvailable(r.devices)
+          const { devices, changed } = mergeFreshDevices(s.devices ?? [], r.devices)
+          if (changed) {
+            await cloud.smart.put({ devices })
+            setState((p) => ({ ...p, devices }))
+          }
+        }).catch(() => {})
+      }
     }).catch(() => setLoaded(true))
   }, [cloud, refreshStatus])
 
@@ -157,6 +182,18 @@ export default function SmartRoom() {
   }
   if (!loaded) return <div className="text-slate-400 p-8">불러오는 중…</div>
 
+  /**
+   * 재조회한 기기 정보(caps·방·모델)를 이미 배정된 기기에도 반영.
+   * 드라이버가 새 기능(볼륨·채널 등)을 감지하게 되면 기존 배정 기기도 따라온다.
+   */
+  const syncAssigned = async (fresh: SmartDevice[]) => {
+    const { devices, changed } = mergeFreshDevices(state.devices, fresh)
+    if (changed) {
+      await cloud.smart.put({ devices })
+      setState((p) => ({ ...p, devices }))
+    }
+  }
+
   const saveConfig = async () => {
     setBusy('config')
     setMsg('')
@@ -170,6 +207,7 @@ export default function SmartRoom() {
       setStToken(''); setTuyaId(''); setTuyaKey(''); setHejToken('')
       const r = await cloud.smart.listDevices()
       setAvailable(r.devices)
+      await syncAssigned(r.devices)
       setMsg(r.errors.length ? `일부 실패: ${r.errors.join(' / ')}` : `✓ 연동 성공 — 기기 ${r.devices.length}개 발견`)
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e))
@@ -221,6 +259,7 @@ export default function SmartRoom() {
     try {
       const r = await cloud.smart.listDevices()
       setAvailable(r.devices)
+      await syncAssigned(r.devices)
       setMsg(r.errors.length ? `일부 실패: ${r.errors.join(' / ')}` : `기기 ${r.devices.length}개`)
     } finally {
       setBusy('')
@@ -550,7 +589,7 @@ export default function SmartRoom() {
             <div className="min-w-0">
               <div className="font-bold text-lg truncate">{d.alias || d.name}</div>
               <div className="text-xs text-slate-400 truncate">
-                {[d.zone, d.room, PROVIDER_LABEL[d.provider] ?? d.provider, d.model].filter(Boolean).join(' · ')}
+                {[...new Set([d.zone, d.room, PROVIDER_LABEL[d.provider] ?? d.provider, d.model].filter(Boolean))].join(' · ')}
               </div>
             </div>
             <button onClick={() => { startEdit(d); setDetailId('') }} title="별칭·공간 수정"
@@ -698,7 +737,7 @@ export default function SmartRoom() {
                 ))}
               </div>
             ) : (
-              <p className="text-[11px] text-slate-400">아직 기록이 없어요. 15분마다 자동 수집됩니다.</p>
+              <p className="text-[11px] text-slate-400">아직 이벤트가 없어요. 켬/끔이 생기면 15분 주기로 여기에 쌓입니다.</p>
             )}
           </Card>
         </div>
