@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useStore } from '../lib/store'
 import { Card, PageTitle } from '../components/ui'
-import type { SmartHomeState, SmartDevice, SmartDeviceStatus, SmartLog } from '../lib/api'
+import type { SmartHomeState, SmartDevice, SmartDeviceStatus, SmartLog, SmartScene, SmartSchedule } from '../lib/api'
 
 const EMPTY: SmartHomeState = { config: {}, devices: [], rules: {} }
 
@@ -81,6 +81,8 @@ export default function SmartRoom() {
   const [editId, setEditId] = useState('')
   const [editAlias, setEditAlias] = useState('')
   const [editZone, setEditZone] = useState('')
+  const [sceneEdit, setSceneEdit] = useState(false)
+  const [sceneMsg, setSceneMsg] = useState('')
   // 연동·기기 배정 섹션 — 설정이 끝난 계정은 기본 접힘 (운영 화면 깔끔하게)
   const [showSetup, setShowSetup] = useState(false)
 
@@ -196,6 +198,46 @@ export default function SmartRoom() {
     } finally {
       setBusy('')
     }
+  }
+
+  // ── 씬 & 시간 예약 ─────────────────────────────────────────
+  const persistSmart = (patch: { scenes?: SmartScene[]; schedules?: SmartSchedule[] }) => {
+    cloud.smart.put(patch).catch(() => setSceneMsg('저장 실패 — 네트워크를 확인해 주세요'))
+  }
+
+  const patchScenes = (fn: (prev: SmartScene[]) => SmartScene[], persist = false) => {
+    const scenes = fn(state.scenes ?? [])
+    setState((p) => ({ ...p, scenes }))
+    if (persist) persistSmart({ scenes })
+  }
+
+  const patchSchedules = (fn: (prev: SmartSchedule[]) => SmartSchedule[]) => {
+    const schedules = fn(state.schedules ?? [])
+    setState((p) => ({ ...p, schedules }))
+    persistSmart({ schedules })
+  }
+
+  const finishSceneEdit = () => {
+    setSceneEdit(false)
+    persistSmart({ scenes: state.scenes ?? [] })
+    setSceneMsg('✓ 씬 저장 완료')
+  }
+
+  const runScene = async (sc: SmartScene) => {
+    setBusy(`scene:${sc.id}`)
+    setSceneMsg('')
+    let fail = 0
+    for (const a of sc.actions) {
+      if (a.command !== 'on' && a.command !== 'off') continue
+      try {
+        await cloud.smart.command({ provider: a.provider, deviceId: a.deviceId, command: a.command })
+      } catch {
+        fail++
+      }
+    }
+    setSceneMsg(fail === 0 ? `✓ ${sc.name} 실행 완료` : `${sc.name}: 기기 ${fail}개 실행 실패`)
+    setBusy('')
+    refreshStatus()
   }
 
   const assign = async (d: SmartDevice, listingId: string) => {
@@ -538,6 +580,7 @@ export default function SmartRoom() {
                     className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs shrink-0"
                   >
                     <option value="">배정 안 함</option>
+                    <option value="@home">🏠 우리집 (숙소 아님)</option>
                     {listings.filter((l) => l.active).map((l) => (
                       <option key={l.id} value={l.id}>{l.thumbnail} {l.name}</option>
                     ))}
@@ -551,7 +594,132 @@ export default function SmartRoom() {
       </>
       )}
 
-      {listings.filter((l) => l.active).map((l) => {
+      {state.devices.length > 0 && (
+        <Card className="mb-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+            <div className="font-semibold">🎬 원탭 씬 & 시간 예약</div>
+            <button
+              onClick={() => (sceneEdit ? finishSceneEdit() : setSceneEdit(true))}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-50"
+            >
+              {sceneEdit ? '완료 (저장)' : '✏️ 씬 편집'}
+            </button>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            {(state.scenes ?? []).map((sc) => (
+              <button key={sc.id} onClick={() => runScene(sc)} disabled={busy !== ''}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium shadow-sm hover:bg-slate-50 disabled:opacity-40">
+                {busy === `scene:${sc.id}` ? '⏳ 실행 중…' : `${sc.emoji} ${sc.name}`}
+              </button>
+            ))}
+            {(state.scenes ?? []).length === 0 && !sceneEdit && (
+              <p className="text-xs text-slate-400">
+                "✏️ 씬 편집"에서 외출·귀가·취침 같은 씬을 만들면 버튼 하나로 여러 기기를 한 번에 켜고 끌 수 있어요.
+              </p>
+            )}
+          </div>
+          {sceneMsg && (
+            <p className={`text-xs mt-2 ${sceneMsg.startsWith('✓') ? 'text-emerald-600' : 'text-amber-600'}`}>{sceneMsg}</p>
+          )}
+          {sceneEdit && (
+            <div className="space-y-3 mt-3">
+              {(state.scenes ?? []).map((sc) => (
+                <div key={sc.id} className="rounded-xl border border-slate-200 p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <input value={sc.emoji} maxLength={4}
+                      onChange={(e) => patchScenes((prev) => prev.map((x) => x.id === sc.id ? { ...x, emoji: e.target.value } : x))}
+                      className="w-12 rounded border border-slate-300 px-2 py-1 text-sm text-center" />
+                    <input value={sc.name} placeholder="씬 이름 (예: 외출)"
+                      onChange={(e) => patchScenes((prev) => prev.map((x) => x.id === sc.id ? { ...x, name: e.target.value } : x))}
+                      className="flex-1 rounded border border-slate-300 px-2 py-1 text-sm" />
+                    <button onClick={() => patchScenes((prev) => prev.filter((x) => x.id !== sc.id), true)}
+                      className="text-xs text-rose-500 shrink-0">삭제</button>
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-1.5">
+                    {state.devices.map((d) => {
+                      const act = sc.actions.find((a) => a.deviceId === d.deviceId)
+                      return (
+                        <div key={d.deviceId} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="truncate text-slate-600">{d.alias || d.name}</span>
+                          <select value={act?.command ?? ''}
+                            onChange={(e) => patchScenes((prev) => prev.map((x) => {
+                              if (x.id !== sc.id) return x
+                              const actions = x.actions.filter((a) => a.deviceId !== d.deviceId)
+                              if (e.target.value === 'on' || e.target.value === 'off') {
+                                actions.push({ provider: d.provider, deviceId: d.deviceId, command: e.target.value })
+                              }
+                              return { ...x, actions }
+                            }))}
+                            className="rounded border border-slate-300 bg-white px-1.5 py-1 text-xs shrink-0">
+                            <option value="">동작 없음</option>
+                            <option value="on">켜기</option>
+                            <option value="off">끄기</option>
+                          </select>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+              <button
+                onClick={() => patchScenes((prev) => [...prev, { id: `sc_${Date.now().toString(36)}`, name: '', emoji: '🌙', actions: [] }])}
+                className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs text-slate-500 hover:bg-slate-50">
+                ＋ 새 씬 만들기
+              </button>
+            </div>
+          )}
+
+          <div className="mt-4 border-t border-slate-100 pt-3">
+            <div className="text-xs font-semibold text-slate-500 mb-2">
+              ⏰ 시간 예약 — 정해진 시각에 씬 자동 실행 (15분 주기 확인이라 최대 15분 늦을 수 있어요)
+            </div>
+            <div className="space-y-2">
+              {(state.schedules ?? []).map((s) => (
+                <div key={s.id} className="flex items-center gap-2 flex-wrap text-xs">
+                  <input type="checkbox" checked={s.enabled} title="사용"
+                    onChange={(e) => patchSchedules((prev) => prev.map((x) => x.id === s.id ? { ...x, enabled: e.target.checked } : x))}
+                    className="accent-indigo-600" />
+                  <input type="time" value={s.time}
+                    onChange={(e) => patchSchedules((prev) => prev.map((x) => x.id === s.id ? { ...x, time: e.target.value } : x))}
+                    className="rounded border border-slate-300 px-1.5 py-1" />
+                  <select value={s.sceneId}
+                    onChange={(e) => patchSchedules((prev) => prev.map((x) => x.id === s.id ? { ...x, sceneId: e.target.value } : x))}
+                    className="rounded border border-slate-300 bg-white px-1.5 py-1">
+                    <option value="">씬 선택</option>
+                    {(state.scenes ?? []).map((sc) => <option key={sc.id} value={sc.id}>{sc.emoji} {sc.name}</option>)}
+                  </select>
+                  <div className="flex gap-0.5">
+                    {['일', '월', '화', '수', '목', '금', '토'].map((label, i) => (
+                      <button key={i}
+                        onClick={() => patchSchedules((prev) => prev.map((x) => x.id === s.id
+                          ? { ...x, days: x.days.includes(i) ? x.days.filter((d) => d !== i) : [...x.days, i].sort() }
+                          : x))}
+                        className={`w-6 h-6 rounded text-[10px] font-medium ${s.days.includes(i) ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={() => patchSchedules((prev) => prev.filter((x) => x.id !== s.id))}
+                    className="text-rose-500">삭제</button>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => patchSchedules((prev) => [...prev, {
+                id: `sd_${Date.now().toString(36)}`, time: '22:00', days: [0, 1, 2, 3, 4, 5, 6],
+                sceneId: (state.scenes ?? [])[0]?.id ?? '', enabled: true,
+              }])}
+              className="mt-2 rounded-lg border border-dashed border-slate-300 px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-50">
+              ＋ 예약 추가
+            </button>
+          </div>
+        </Card>
+      )}
+
+      {[
+        ...listings.filter((l) => l.active).map((l) => ({ id: l.id, name: l.name, thumbnail: l.thumbnail, isHome: false })),
+        { id: '@home', name: '우리집', thumbnail: '🏠', isHome: true },
+      ].map((l) => {
         const devices = state.devices.filter((d) => d.listingId === l.id)
         if (devices.length === 0) return null
         const rule = state.rules[l.id] ?? {}
@@ -627,6 +795,7 @@ export default function SmartRoom() {
               </div>
             )}
 
+            {!l.isHome && (
             <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-3.5 text-sm space-y-2">
               <div className="font-semibold text-indigo-900 text-xs">⚡ 예약 연동 자동화 (15분 주기로 자동 실행)</div>
               <label className="flex items-center gap-2 cursor-pointer flex-wrap">
@@ -646,6 +815,7 @@ export default function SmartRoom() {
                 체크아웃 후(11:30) 기기 자동 전원 차단 — 당일 새 체크인이 있어도 껐다가, 위의 체크인 예열이 시간에 맞춰 다시 켭니다
               </label>
             </div>
+            )}
           </Card>
         )
       })}

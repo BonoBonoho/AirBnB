@@ -60,6 +60,23 @@ export interface SmartLog {
 
 export type SmartCommandName = 'on' | 'off' | 'setCoolingSetpoint' | 'setAcMode' | 'setFanMode'
 
+/** 원탭 씬 — 여러 기기를 한 버튼으로 켜기/끄기 (외출·귀가·취침 등) */
+export interface SmartScene {
+  id: string
+  name: string
+  emoji: string
+  actions: { provider: string; deviceId: string; command: 'on' | 'off' }[]
+}
+
+/** 시간 예약 — 지정 시각(KST)에 씬 자동 실행. days 비면 매일 */
+export interface SmartSchedule {
+  id: string
+  time: string // "HH:MM"
+  days: number[] // 0=일 … 6=토
+  sceneId: string
+  enabled: boolean
+}
+
 export interface SmartHomeState {
   config: {
     smartthings?: { token?: string; oauth?: { expiresAt: number } }
@@ -70,6 +87,8 @@ export interface SmartHomeState {
   rules: Record<string, { preheat?: boolean; preheatMinutes?: number; targetTemp?: number; autoOff?: boolean }>
   /** 마지막으로 발견된 기기 목록 (새로고침 후에도 유지) */
   available?: SmartDevice[]
+  scenes?: SmartScene[]
+  schedules?: SmartSchedule[]
 }
 
 /** 공동 호스트 권한 (조회는 팀원 모두, 수정은 켜진 항목만) */

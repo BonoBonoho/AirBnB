@@ -27,6 +27,22 @@ interface Rules {
   [listingId: string]: { preheat?: boolean; preheatMinutes?: number; targetTemp?: number; autoOff?: boolean }
 }
 
+/** 원탭 씬 — 기기 여러 대를 한 번에 켜기/끄기 */
+interface Scene {
+  id: string
+  name?: string
+  actions?: { deviceId: string; command: 'on' | 'off' }[]
+}
+
+/** 시간 예약 — 지정 시각(KST)에 씬 실행 (집·숙소 공용) */
+interface Schedule {
+  id: string
+  time?: string // "HH:MM"
+  days?: number[] // 0=일 … 6=토, 비어 있으면 매일
+  sceneId?: string
+  enabled?: boolean
+}
+
 interface BookingLite {
   listingId: string
   checkIn: string
@@ -92,7 +108,10 @@ export async function handler(): Promise<void> {
 
   for (const sub of users) {
     try {
-      const smart = await getDoc<{ config: SmartHomeConfig; devices: MappedDevice[]; rules: Rules; available?: unknown }>(sub, 'SMARTHOME')
+      const smart = await getDoc<{
+        config: SmartHomeConfig; devices: MappedDevice[]; rules: Rules
+        available?: unknown; scenes?: Scene[]; schedules?: Schedule[]
+      }>(sub, 'SMARTHOME')
       if (!smart?.config || !smart.devices?.length) continue
       const rules = smart.rules ?? {}
       const bookings = (await getDoc<BookingLite[]>(sub, 'BOOKINGS')) ?? []
@@ -173,6 +192,30 @@ export async function handler(): Promise<void> {
             }
           }
         }
+      }
+
+      // ── 시간 예약: 지정 시각(KST) 도래 시 씬 실행 — 하루 1회, 60분 이내에만
+      // (람다가 오래 멈췄다 돌아와도 한밤중에 아침 씬이 실행되지 않도록 창을 둔다)
+      const dow = now.getUTCDay() // KST 보정된 Date라 UTC getter = KST 요일
+      for (const sch of smart.schedules ?? []) {
+        if (!sch.enabled || !sch.time || !sch.sceneId) continue
+        if (!sch.days?.length || !sch.days.includes(dow)) continue // 요일 미선택 = 실행 안 함
+        const [hh, mm] = sch.time.split(':').map(Number)
+        if (!Number.isFinite(hh)) continue
+        const schedMin = hh * 60 + (Number.isFinite(mm) ? mm : 0)
+        const key = `sched:${sch.id}:${today}`
+        if (nowMin < schedMin || nowMin >= schedMin + 60 || done[key]) continue
+        const scene = (smart.scenes ?? []).find((s) => s.id === sch.sceneId)
+        for (const a of scene?.actions ?? []) {
+          const d = smart.devices.find((x) => x.deviceId === a.deviceId)
+          if (!d || (a.command !== 'on' && a.command !== 'off')) continue
+          await sendCommand(stTok, hejTok, smart.config, d, a.command)
+            .then(() => { log.events.unshift({ ts: new Date().toISOString(), d: d.deviceId, ev: a.command, by: 'auto' }); logDirty = true })
+            .catch((e) => console.error('schedule fail', e))
+        }
+        done[key] = new Date().toISOString()
+        dirty = true
+        console.log(`schedule fired: ${sub} ${sch.id} (${scene?.name ?? sch.sceneId})`)
       }
 
       // ── 상태 샘플링: 켬/끔 감지 + 가동시간(분) 적산 — 15분 주기라 15분 해상도
