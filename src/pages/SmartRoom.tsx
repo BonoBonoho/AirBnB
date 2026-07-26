@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useStore } from '../lib/store'
 import { Card, PageTitle } from '../components/ui'
-import type { SmartHomeState, SmartDevice, SmartDeviceStatus, SmartLog, SmartScene, SmartSchedule, SmartCommandName, TeamMember } from '../lib/api'
+import type { SmartHomeState, SmartDevice, SmartDeviceStatus, SmartLog, SmartScene, SmartSchedule, SmartCommandName } from '../lib/api'
 
 const EMPTY: SmartHomeState = { config: {}, devices: [], rules: {} }
 
@@ -20,6 +20,22 @@ const FAN_MODES: { value: string; label: string }[] = [
   { value: 'high', label: '강' },
   { value: 'turbo', label: '터보' },
 ]
+
+/** 삼성 에어컨 부가 모드 라벨 (custom.airConditionerOptionalMode) */
+const OPT_LABEL: Record<string, string> = {
+  windFree: '무풍',
+  windFreeSleep: '무풍 취침',
+  sleep: '열대야 쾌면',
+  speed: '스피드',
+  quiet: '조용히',
+  smart: '스마트',
+  longWind: '롱바람',
+  motionIndirect: '간접바람',
+  motionDirect: '직접바람',
+}
+function optLabel(v: string): string {
+  return OPT_LABEL[v] ?? v
+}
 
 function modeLabel(v?: string): string {
   return AC_MODES.find((m) => m.value === v)?.label ?? v ?? ''
@@ -52,8 +68,13 @@ function eventLabel(ev: string): string {
   if (ev.startsWith('mode:')) return `${modeLabel(ev.slice(5))} 모드`
   if (ev.startsWith('fan:')) return `팬 ${fanLabel(ev.slice(4))}`
   if (ev.startsWith('vol:')) return `볼륨 ${ev.slice(4)}`
+  if (ev.startsWith('opt:')) return ev.slice(4) === 'off' ? '부가모드 끔' : `${optLabel(ev.slice(4))} 모드`
   if (ev === 'mute') return '음소거'
   if (ev === 'unmute') return '음소거 해제'
+  if (ev === 'channelUp') return '채널 ▲'
+  if (ev === 'channelDown') return '채널 ▼'
+  if (ev === 'play') return '재생'
+  if (ev === 'pause') return '일시정지'
   return ev
 }
 
@@ -88,10 +109,6 @@ export default function SmartRoom() {
   const [sceneMsg, setSceneMsg] = useState('')
   const [dropTarget, setDropTarget] = useState('')
   const [extraZones, setExtraZones] = useState<{ spaceId: string; name: string }[]>([])
-  const [famList, setFamList] = useState<TeamMember[] | null>(null)
-  const [famEmail, setFamEmail] = useState('')
-  const [famBusy, setFamBusy] = useState(false)
-  const [famMsg, setFamMsg] = useState('')
   // 연동·기기 배정 섹션 — 설정이 끝난 계정은 기본 접힘 (운영 화면 깔끔하게)
   const [showSetup, setShowSetup] = useState(false)
 
@@ -116,13 +133,6 @@ export default function SmartRoom() {
       if (s.devices?.length) refreshStatus()
     }).catch(() => setLoaded(true))
   }, [cloud, refreshStatus])
-
-  // 집 모드 소유자: 가족(팀) 목록 로드 — 초대 카드용
-  useEffect(() => {
-    if (mode === 'home' && cloud && cloud.perms === 'owner') {
-      cloud.team.get().then((r) => setFamList(r.members)).catch(() => {})
-    }
-  }, [mode, cloud])
 
   // 스마트싱스 OAuth 콜백 결과 (?st=connected 등)
   useEffect(() => {
@@ -321,33 +331,6 @@ export default function SmartRoom() {
     await updateDevice(deviceId, { zone: zone || undefined, listingId })
   }
 
-  const inviteFamily = async () => {
-    const email = famEmail.trim().toLowerCase()
-    if (!/.+@.+\..+/.test(email)) { setFamMsg('올바른 이메일을 입력해 주세요'); return }
-    setFamBusy(true)
-    setFamMsg('')
-    try {
-      const members = [
-        ...(famList ?? []).filter((m) => m.email !== email),
-        { email, perms: { smart: true }, invitedAt: new Date().toISOString() },
-      ]
-      await cloud.team.put(members)
-      setFamList(members)
-      setFamEmail('')
-      setFamMsg('✓ 초대 완료 — 같은 이메일로 가입 후 로그인하면 됩니다')
-    } catch (e) {
-      setFamMsg(e instanceof Error ? e.message : '초대 실패')
-    } finally {
-      setFamBusy(false)
-    }
-  }
-
-  const removeFamily = async (email: string) => {
-    const members = (famList ?? []).filter((m) => m.email !== email)
-    await cloud.team.put(members).catch(() => setFamMsg('해제 실패'))
-    setFamList(members)
-  }
-
   const connected = !!(state.config.smartthings || state.config.tuya || state.config.hejhome)
   const PROVIDER_LABEL = { smartthings: '스마트싱스', tuya: 'Tuya', hejhome: '헤이홈' } as const
   const stOauth = !!state.config.smartthings?.oauth
@@ -448,10 +431,10 @@ export default function SmartRoom() {
           <div className="mt-2.5 space-y-2">
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-slate-500 w-8">온도</span>
-              <button onClick={() => command(d, 'setCoolingSetpoint', Math.max(16, (sp ?? 24) - 1))} disabled={isBusy}
+              <button onClick={() => command(d, 'setCoolingSetpoint', Math.max(16, (sp ?? 24) - 0.5))} disabled={isBusy}
                 className="w-9 h-9 rounded-xl border border-slate-300 bg-white text-lg font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">−</button>
               <span className="w-12 text-center font-bold text-base">{sp !== undefined ? `${sp}°` : '—'}</span>
-              <button onClick={() => command(d, 'setCoolingSetpoint', Math.min(30, (sp ?? 24) + 1))} disabled={isBusy}
+              <button onClick={() => command(d, 'setCoolingSetpoint', Math.min(30, (sp ?? 24) + 0.5))} disabled={isBusy}
                 className="w-9 h-9 rounded-xl border border-slate-300 bg-white text-lg font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">+</button>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -472,6 +455,38 @@ export default function SmartRoom() {
                 </button>
               ))}
             </div>
+            {(s?.acOptionalModes ?? []).filter((m) => m !== 'off').length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] text-slate-500 w-8">옵션</span>
+                {(s?.acOptionalModes ?? []).filter((m) => m !== 'off').map((m) => (
+                  <button key={m}
+                    onClick={() => command(d, 'setAcOptionalMode', s?.acOptionalMode === m ? 'off' : m)}
+                    disabled={isBusy}
+                    className={`rounded-lg px-2.5 py-1.5 text-xs font-medium border ${s?.acOptionalMode === m ? 'bg-violet-500 border-violet-500 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'} disabled:opacity-40`}>
+                    {optLabel(m)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {(d.caps.includes('tv') || d.caps.includes('media')) && isOn && (
+          <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] text-slate-500 w-8">TV</span>
+            {d.caps.includes('tv') && (
+              <>
+                <button onClick={() => command(d, 'channelUp')} disabled={isBusy}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-40">채널 ▲</button>
+                <button onClick={() => command(d, 'channelDown')} disabled={isBusy}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-40">채널 ▼</button>
+              </>
+            )}
+            {d.caps.includes('media') && (
+              <button onClick={() => command(d, s?.playback === 'playing' ? 'pause' : 'play')} disabled={isBusy}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-40">
+                {s?.playback === 'playing' ? '⏸ 일시정지' : '▶ 재생'}
+              </button>
+            )}
           </div>
         )}
         {d.caps.includes('volume') && isOn && (
@@ -794,46 +809,6 @@ export default function SmartRoom() {
               ＋ 예약 추가
             </button>
           </div>
-        </Card>
-      )}
-
-      {mode === 'home' && cloud.perms === 'owner' && (
-        <Card className="mb-4">
-          <div className="font-semibold mb-1">👨‍👩‍👧 가족 초대</div>
-          <p className="text-xs text-slate-400 mb-2 leading-relaxed">
-            초대한 가족이 stayprice.co에 <b>같은 이메일로 가입</b> 후 로그인 → <b>집 모드</b> 선택 →
-            상단에서 "회원님의 집"을 고르면 함께 기기를 제어할 수 있어요 (스마트홈 기능만 보입니다).
-          </p>
-          <div className="flex gap-2">
-            <input
-              value={famEmail}
-              onChange={(e) => setFamEmail(e.target.value)}
-              placeholder="가족 이메일 (예: family@gmail.com)"
-              className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            />
-            <button onClick={inviteFamily} disabled={famBusy || !famEmail.trim()}
-              className="rounded-lg bg-indigo-500 text-white px-4 py-2 text-sm font-semibold hover:bg-indigo-600 disabled:opacity-50">
-              {famBusy ? '초대 중…' : '초대'}
-            </button>
-          </div>
-          {famMsg && (
-            <p className={`text-xs mt-1.5 ${famMsg.startsWith('✓') ? 'text-emerald-600' : 'text-amber-600'}`}>{famMsg}</p>
-          )}
-          {(famList ?? []).length > 0 && (
-            <div className="mt-2.5 space-y-1">
-              {(famList ?? []).map((m) => (
-                <div key={m.email} className="flex items-center justify-between gap-2 text-xs rounded-lg bg-slate-50 px-2.5 py-1.5">
-                  <span className="truncate">
-                    {m.email}
-                    <span className="ml-1.5 text-slate-400">
-                      {m.perms.pricing || m.perms.channels || m.perms.guest ? '(공동 호스트)' : '(가족·스마트홈)'}
-                    </span>
-                  </span>
-                  <button onClick={() => removeFamily(m.email)} className="text-rose-500 shrink-0 hover:underline">해제</button>
-                </div>
-              ))}
-            </div>
-          )}
         </Card>
       )}
 
