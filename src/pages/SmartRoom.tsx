@@ -73,6 +73,11 @@ export default function SmartRoom() {
   const [tuyaKey, setTuyaKey] = useState('')
   const [tuyaRegion, setTuyaRegion] = useState<'us' | 'eu' | 'cn' | 'in'>('us')
   const [hejToken, setHejToken] = useState('')
+  const [hejClientId, setHejClientId] = useState('')
+  const [hejClientSecret, setHejClientSecret] = useState('')
+  const [hejAppKey, setHejAppKey] = useState('')
+  const [hejEmail, setHejEmail] = useState('')
+  const [hejPw, setHejPw] = useState('')
   const [editId, setEditId] = useState('')
   const [editAlias, setEditAlias] = useState('')
   const [editZone, setEditZone] = useState('')
@@ -152,6 +157,32 @@ export default function SmartRoom() {
       window.location.href = r.url
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e))
+      setBusy('')
+    }
+  }
+
+  const hejConnect = async () => {
+    setBusy('hej')
+    setMsg('')
+    try {
+      const r = await cloud.smart.hejLogin({
+        clientId: hejClientId.trim(),
+        clientSecret: hejClientSecret.trim(),
+        appKey: hejAppKey.trim(),
+        username: hejEmail.trim(),
+        password: hejPw,
+      })
+      setState((p) => ({
+        ...p,
+        config: { ...p.config, hejhome: { creds: { clientId: hejClientId.trim() }, oauth: { expiresAt: r.expiresAt } } },
+      }))
+      setHejClientId(''); setHejClientSecret(''); setHejAppKey(''); setHejEmail(''); setHejPw('')
+      const d = await cloud.smart.listDevices()
+      setAvailable(d.devices)
+      setMsg(d.errors.length ? `일부 실패: ${d.errors.join(' / ')}` : `✓ 헤이홈 연동 성공 — 기기 ${d.devices.length}개 발견`)
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e))
+    } finally {
       setBusy('')
     }
   }
@@ -419,18 +450,47 @@ export default function SmartRoom() {
           </div>
           <div className="rounded-xl border border-slate-200 p-3.5">
             <div className="text-sm font-semibold mb-1.5">
-              헤이홈 (고퀄) {state.config.hejhome && <span className="text-emerald-600 text-xs">● 연동됨</span>}
+              헤이홈 (고퀄){' '}
+              {state.config.hejhome?.oauth
+                ? <span className="text-emerald-600 text-xs">● 연동됨 (자동 갱신)</span>
+                : state.config.hejhome
+                  ? <span className="text-amber-600 text-xs">● 연동됨 (수동 토큰)</span>
+                  : null}
             </div>
             <p className="text-xs text-slate-400 mb-2">
-              헤이홈 오픈API 액세스 토큰을 붙여넣으세요 (헤이홈 앱에 등록된 기기 전체가 연동됩니다)
+              헤이홈 오픈API 문서(
+              <a href="https://goqual.notion.site/API-078d8c3c22f24b23bda799e38f2c819d" target="_blank" rel="noreferrer" className="underline">goqual.notion.site</a>
+              )에서 사용 신청하면 Client ID·Client Secret·App Key를 메일로 보내줍니다.
+              받은 3가지와 헤이홈 앱 로그인 계정을 입력하세요. 비밀번호는 토큰 발급에만 쓰고 저장하지 않습니다.
             </p>
-            <input
-              type="password"
-              value={hejToken}
-              onChange={(e) => setHejToken(e.target.value)}
-              placeholder="헤이홈 액세스 토큰"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
-            />
+            <div className="space-y-2">
+              <input value={hejClientId} onChange={(e) => setHejClientId(e.target.value)} placeholder="Client ID"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono" />
+              <input type="password" value={hejClientSecret} onChange={(e) => setHejClientSecret(e.target.value)} placeholder="Client Secret"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono" />
+              <input type="password" value={hejAppKey} onChange={(e) => setHejAppKey(e.target.value)} placeholder="App Key"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono" />
+              <div className="flex gap-2">
+                <input value={hejEmail} onChange={(e) => setHejEmail(e.target.value)} placeholder="헤이홈 계정 (이메일/휴대폰)"
+                  className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                <input type="password" value={hejPw} onChange={(e) => setHejPw(e.target.value)} placeholder="비밀번호"
+                  className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+              </div>
+              <button onClick={hejConnect} disabled={busy === 'hej' || !hejClientId.trim() || !hejClientSecret.trim() || !hejAppKey.trim() || !hejEmail.trim() || !hejPw}
+                className="w-full rounded-lg bg-amber-500 text-white px-4 py-2.5 text-sm font-semibold hover:bg-amber-600 disabled:opacity-50">
+                {busy === 'hej' ? '연동 중…' : '🔗 헤이홈 계정으로 연동 (자동 갱신)'}
+              </button>
+            </div>
+            <details className="text-xs text-slate-400 mt-2">
+              <summary className="cursor-pointer">또는 액세스 토큰 직접 입력</summary>
+              <input
+                type="password"
+                value={hejToken}
+                onChange={(e) => setHejToken(e.target.value)}
+                placeholder="헤이홈 액세스 토큰"
+                className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+              />
+            </details>
           </div>
         </div>
         <div className="flex items-center gap-3 mt-3 flex-wrap">

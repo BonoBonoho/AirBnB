@@ -64,7 +64,7 @@ export interface SmartHomeState {
   config: {
     smartthings?: { token?: string; oauth?: { expiresAt: number } }
     tuya?: { accessId: string; accessKey: string; region: 'us' | 'eu' | 'cn' | 'in' }
-    hejhome?: { token: string }
+    hejhome?: { token?: string; creds?: { clientId: string }; oauth?: { expiresAt: number } }
   }
   devices: SmartDevice[]
   rules: Record<string, { preheat?: boolean; preheatMinutes?: number; targetTemp?: number; autoOff?: boolean }>
@@ -200,6 +200,10 @@ export const api = {
     request<{ ok: boolean }>(cfg, 'PUT', '/api/guest-notes', { bookingId, note }),
   stOauthUrl: (cfg: AppConfig) =>
     request<{ url: string; redirectUri: string }>(cfg, 'POST', '/api/smarthome/st-oauth-url'),
+  hejhomeLogin: (
+    cfg: AppConfig,
+    payload: { clientId: string; clientSecret: string; appKey: string; username: string; password: string },
+  ) => request<{ ok: boolean; expiresAt: number }>(cfg, 'POST', '/api/smarthome/hejhome-login', payload),
   publishPage: (
     cfg: AppConfig,
     payload: {

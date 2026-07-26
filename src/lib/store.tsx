@@ -49,6 +49,7 @@ interface Store {
       command: (p: Parameters<typeof api.smartCommand>[1]) => ReturnType<typeof api.smartCommand>
       history: () => ReturnType<typeof api.smartHistory>
       oauthUrl: () => ReturnType<typeof api.stOauthUrl>
+      hejLogin: (p: Parameters<typeof api.hejhomeLogin>[1]) => ReturnType<typeof api.hejhomeLogin>
     }
     /** 게스트 메모 (예약 id → 메모) */
     guestNotes: Record<string, string>
@@ -370,6 +371,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               command: (p) => api.smartCommand(config, p),
               history: () => api.smartHistory(config),
               oauthUrl: () => api.stOauthUrl(config),
+              hejLogin: (p) => api.hejhomeLogin(config, p),
             },
             guestNotes,
             saveGuestNote: async (bookingId: string, note: string) => {
