@@ -373,11 +373,13 @@ export async function handler(
     if (path === '/api/smarthome' && method === 'PUT') {
       if (!can('smart')) return json(403, { error: '스마트룸 설정 권한이 없습니다. 소유자에게 요청하세요.' })
       const body = JSON.parse(event.body ?? '{}')
-      const prev = (await getDoc<{ config: SmartHomeConfig; devices: SmartDevice[]; rules: unknown; available: SmartDevice[] }>(sub, 'SMARTHOME')) ?? { config: {}, devices: [], rules: {}, available: [] }
+      const prev = (await getDoc<{ config: SmartHomeConfig; devices: SmartDevice[]; rules: unknown; available: SmartDevice[]; scenes?: unknown; schedules?: unknown }>(sub, 'SMARTHOME')) ?? { config: {}, devices: [], rules: {}, available: [] }
       const next = {
         config: body.config !== undefined ? body.config : prev.config,
         devices: body.devices !== undefined ? body.devices : prev.devices,
         rules: body.rules !== undefined ? body.rules : prev.rules,
+        scenes: body.scenes !== undefined ? body.scenes : (prev.scenes ?? []),
+        schedules: body.schedules !== undefined ? body.schedules : (prev.schedules ?? []),
         available: body.available !== undefined ? body.available : (prev.available ?? []),
       }
       await putDoc(sub, 'SMARTHOME', next)
@@ -448,8 +450,9 @@ export async function handler(
         } catch (e) { errors.push(`헤이홈: ${e instanceof Error ? e.message : e}`) }
       }
       if (out.length > 0) {
+        // 전체 doc 스프레드로 저장 — scenes/schedules 등 다른 필드 보존
         await putDoc(sub, 'SMARTHOME', {
-          config: smart.config,
+          ...smart,
           devices: smart.devices ?? [],
           rules: smart.rules ?? {},
           available: out,
