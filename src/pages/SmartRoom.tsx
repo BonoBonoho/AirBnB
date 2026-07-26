@@ -401,7 +401,13 @@ export default function SmartRoom() {
           e.dataTransfer.setData('text/plain', d.deviceId)
           e.dataTransfer.effectAllowed = 'move'
         }}
-        className={`rounded-2xl border px-3.5 py-3 text-sm transition-colors md:cursor-grab ${isOn ? 'border-emerald-200 bg-emerald-50/40' : 'border-slate-200'}`}
+        onClick={(e) => {
+          // 버튼(토글·모드·✏️ 등)을 누른 게 아니면 카드 어디를 눌러도 상세로
+          if ((e.target as HTMLElement).closest('button')) return
+          setDetailId(d.deviceId)
+          refreshStatus()
+        }}
+        className={`rounded-2xl border px-3.5 py-3 text-sm transition-colors cursor-pointer md:cursor-grab ${isOn ? 'border-emerald-200 bg-emerald-50/40' : 'border-slate-200'}`}
       >
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0 truncate">
