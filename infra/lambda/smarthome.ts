@@ -2,7 +2,7 @@
 import { createHmac, createCipheriv } from 'node:crypto'
 
 export interface SmartDevice {
-  provider: 'smartthings' | 'tuya' | 'hejhome'
+  provider: 'smartthings' | 'tuya' | 'hejhome' | 'hub'
   deviceId: string
   name: string
   /** 감지된 기능: temp/humidity/switch/ac */

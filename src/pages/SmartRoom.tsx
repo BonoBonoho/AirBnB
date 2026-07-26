@@ -124,6 +124,8 @@ export default function SmartRoom() {
   const [dropTarget, setDropTarget] = useState('')
   const [extraZones, setExtraZones] = useState<{ spaceId: string; name: string }[]>([])
   const [detailId, setDetailId] = useState('')
+  const [hubs, setHubs] = useState<{ hubId: string; name: string; pairedAt: string; lastSeen: string | null }[]>([])
+  const [hubIssued, setHubIssued] = useState<{ hubId: string; key: string; apiUrl: string } | null>(null)
   // 연동·기기 배정 섹션 — 설정이 끝난 계정은 기본 접힘 (운영 화면 깔끔하게)
   const [showSetup, setShowSetup] = useState(false)
 
@@ -159,6 +161,12 @@ export default function SmartRoom() {
       }
     }).catch(() => setLoaded(true))
   }, [cloud, refreshStatus])
+
+  // 허브 목록 로드
+  useEffect(() => {
+    if (!cloud) return
+    cloud.smart.hubList().then((r) => setHubs(r.hubs)).catch(() => {})
+  }, [cloud])
 
   // 스마트싱스 OAuth 콜백 결과 (?st=connected 등)
   useEffect(() => {
@@ -371,8 +379,8 @@ export default function SmartRoom() {
     await updateDevice(deviceId, { zone: zone || undefined, listingId })
   }
 
-  const connected = !!(state.config.smartthings || state.config.tuya || state.config.hejhome)
-  const PROVIDER_LABEL = { smartthings: '스마트싱스', tuya: 'Tuya', hejhome: '헤이홈' } as const
+  const connected = !!(state.config.smartthings || state.config.tuya || state.config.hejhome) || hubs.length > 0
+  const PROVIDER_LABEL = { smartthings: '스마트싱스', tuya: 'Tuya', hejhome: '헤이홈', hub: '허브' } as const
   const stOauth = !!state.config.smartthings?.oauth
 
   const ZONE_DEFAULTS = ['거실', '안방', '작은방', '주방', '테라스', '1층', '2층']
@@ -863,6 +871,71 @@ export default function SmartRoom() {
                 className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
               />
             </details>
+          </div>
+          <div className="rounded-xl border border-slate-200 p-3.5">
+            <div className="text-sm font-semibold mb-1.5">
+              🛜 스테이프라이스 허브 <span className="rounded bg-indigo-100 text-indigo-600 px-1.5 py-0.5 text-[10px] font-bold align-middle">베타</span>{' '}
+              {hubs.some((h) => h.lastSeen && Date.now() - Date.parse(h.lastSeen) < 3 * 60_000) && (
+                <span className="text-emerald-600 text-xs">● 접속 중</span>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 mb-2 leading-relaxed">
+              집·숙소에 둔 미니 컴퓨터(라즈베리파이 등)에 허브 프로그램을 설치하면 제조사 클라우드 없이
+              기기를 직접 제어합니다. 코드를 발급받아 허브의 config.json에 넣으세요.
+            </p>
+            {hubs.length > 0 && (
+              <div className="space-y-1 mb-2">
+                {hubs.map((h) => {
+                  const online = h.lastSeen && Date.now() - Date.parse(h.lastSeen) < 3 * 60_000
+                  return (
+                    <div key={h.hubId} className="flex items-center justify-between gap-2 text-xs rounded-lg bg-slate-50 px-2.5 py-1.5">
+                      <span className="truncate">
+                        <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle ${online ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                        {h.name} <span className="text-slate-400 font-mono">{h.hubId}</span>
+                        <span className="text-slate-400 ml-1">
+                          {online ? '접속 중' : h.lastSeen ? `마지막 접속 ${new Date(h.lastSeen).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '미접속'}
+                        </span>
+                      </span>
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm(`허브 "${h.name}"를 삭제할까요? 이 허브의 기기들이 목록에서 사라집니다.`)) return
+                          await cloud.smart.hubRemove(h.hubId)
+                          setHubs((p) => p.filter((x) => x.hubId !== h.hubId))
+                        }}
+                        className="text-rose-500 shrink-0 hover:underline">삭제</button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            <button
+              onClick={async () => {
+                const name = window.prompt('허브 이름 (예: 우리집 허브, 1호점 허브)')?.trim()
+                if (!name) return
+                try {
+                  const r = await cloud.smart.hubPair(name)
+                  setHubIssued(r)
+                  const l = await cloud.smart.hubList()
+                  setHubs(l.hubs)
+                } catch (e) {
+                  setMsg(e instanceof Error ? e.message : String(e))
+                }
+              }}
+              className="w-full rounded-lg bg-indigo-500 text-white px-4 py-2.5 text-sm font-semibold hover:bg-indigo-600">
+              ＋ 새 허브 등록 코드 발급
+            </button>
+            {hubIssued && (
+              <div className="mt-2 rounded-lg bg-slate-800 text-slate-100 p-2.5 text-[11px]">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-amber-300 font-semibold">⚠ 키는 지금만 표시됩니다 — config.json에 저장하세요</span>
+                  <button
+                    onClick={() => navigator.clipboard?.writeText(JSON.stringify({ apiUrl: hubIssued.apiUrl, hubId: hubIssued.hubId, key: hubIssued.key }, null, 2))}
+                    className="rounded bg-slate-600 px-2 py-0.5 hover:bg-slate-500">복사</button>
+                </div>
+                <pre className="overflow-x-auto font-mono">{JSON.stringify({ apiUrl: hubIssued.apiUrl, hubId: hubIssued.hubId, key: hubIssued.key }, null, 2)}</pre>
+                <p className="mt-1 text-slate-400">설치 방법: 저장소의 hub/README.md 참고 (Node 18+에서 node agent.js)</p>
+              </div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-3 mt-3 flex-wrap">
