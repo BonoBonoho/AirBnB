@@ -24,7 +24,7 @@ export interface RemoteState {
 }
 
 export interface SmartDevice {
-  provider: 'smartthings' | 'tuya' | 'hejhome'
+  provider: 'smartthings' | 'tuya' | 'hejhome' | 'hub'
   deviceId: string
   name: string
   caps: string[]
@@ -230,6 +230,12 @@ export const api = {
     request<{ ok: boolean }>(cfg, 'PUT', '/api/guest-notes', { bookingId, note }),
   stOauthUrl: (cfg: AppConfig) =>
     request<{ url: string; redirectUri: string }>(cfg, 'POST', '/api/smarthome/st-oauth-url'),
+  hubPair: (cfg: AppConfig, name: string) =>
+    request<{ hubId: string; key: string; apiUrl: string }>(cfg, 'POST', '/api/smarthome/hub-pair', { name }),
+  hubList: (cfg: AppConfig) =>
+    request<{ hubs: { hubId: string; name: string; pairedAt: string; lastSeen: string | null }[] }>(cfg, 'GET', '/api/smarthome/hubs'),
+  hubRemove: (cfg: AppConfig, hubId: string) =>
+    request<{ ok: boolean }>(cfg, 'POST', '/api/smarthome/hub-remove', { hubId }),
   hejhomeLogin: (
     cfg: AppConfig,
     payload: { clientId: string; clientSecret: string; appKey: string; username: string; password: string },

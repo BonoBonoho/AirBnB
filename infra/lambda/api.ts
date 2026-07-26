@@ -124,6 +124,56 @@ export async function handler(
     return json(404, { error: 'not found' })
   }
 
+  // ── 공개 라우트: 스테이프라이스 허브 동기화 — 숙소/집에 설치된 허브가
+  // 3초 주기로 호출해 기기·상태를 보고하고 대기 중인 명령을 받아간다.
+  // 인증은 발급된 허브 키로 (JWT 불필요).
+  if (path === '/public/hub/sync' && method === 'POST') {
+    try {
+      const body = JSON.parse(event.body ?? '{}')
+      const hubId = String(body.hubId ?? '')
+      const key = String(body.key ?? '')
+      if (!/^[a-f0-9]{8}$/.test(hubId) || key.length < 16) return json(401, { error: 'unauthorized' })
+      const map = await getDoc<{ sub: string; key: string }>(`HUB:${hubId}`, 'MAP')
+      if (!map?.sub || map.key !== key) return json(401, { error: 'unauthorized' })
+
+      // 기기·상태 보고 (선택 — 에이전트가 30초 주기로 포함)
+      if (Array.isArray(body.devices) || (body.statuses && typeof body.statuses === 'object')) {
+        const doc = (await getDoc<{
+          devices: { deviceId?: string }[]
+          statuses: Record<string, unknown>
+          seen: Record<string, string>
+        }>(map.sub, 'HUBDEVICES')) ?? { devices: [], statuses: {}, seen: {} }
+        if (Array.isArray(body.devices)) {
+          const others = doc.devices.filter((d) => !String(d.deviceId ?? '').startsWith(`${hubId}:`))
+          const mine = (body.devices as Record<string, unknown>[]).slice(0, 50).map((d) => ({
+            provider: 'hub' as const,
+            deviceId: `${hubId}:${String(d.localId ?? '')}`.slice(0, 80),
+            name: String(d.name ?? '허브 기기').slice(0, 60),
+            caps: Array.isArray(d.caps) ? (d.caps as unknown[]).slice(0, 8).map(String) : ['switch'],
+            model: d.model ? String(d.model).slice(0, 40) : undefined,
+            room: d.room ? String(d.room).slice(0, 30) : undefined,
+          }))
+          doc.devices = [...others, ...mine]
+        }
+        if (body.statuses && typeof body.statuses === 'object') {
+          for (const [k, v] of Object.entries(body.statuses as Record<string, unknown>).slice(0, 50)) {
+            doc.statuses[`${hubId}:${k}`.slice(0, 80)] = v
+          }
+        }
+        doc.seen[hubId] = new Date().toISOString()
+        await putDoc(map.sub, 'HUBDEVICES', doc)
+      }
+
+      // 대기 명령 전달 후 큐 비움
+      const q = (await getDoc<{ items: unknown[] }>(`HUB:${hubId}`, 'QUEUE')) ?? { items: [] }
+      if (q.items.length > 0) await putDoc(`HUB:${hubId}`, 'QUEUE', { items: [] })
+      return json(200, { commands: q.items })
+    } catch (e) {
+      console.error('hub sync failed', e)
+      return json(500, { error: 'internal error' })
+    }
+  }
+
   // ── 공개 라우트: 미니홈 가용성 조회 / 예약 문의 접수
   if (path.startsWith('/public/avail/') || path.startsWith('/public/inquiry/')) {
     const slug = decodeURIComponent(path.split('/').pop() ?? '')
@@ -401,6 +451,45 @@ export async function handler(
       return json(200, { url: stAuthorizeUrl(ST_CLIENT_ID, redirectUri, state), redirectUri })
     }
 
+    // ── 스테이프라이스 허브: 등록 코드 발급 / 목록 / 삭제 ──
+    if (path === '/api/smarthome/hub-pair' && method === 'POST') {
+      if (!can('smart')) return json(403, { error: '허브 등록 권한이 없습니다. 소유자에게 요청하세요.' })
+      const body = JSON.parse(event.body ?? '{}')
+      const name = String(body.name ?? '허브').slice(0, 40) || '허브'
+      const hubId = randomBytes(4).toString('hex')
+      const key = randomBytes(24).toString('hex')
+      await putDoc(`HUB:${hubId}`, 'MAP', { sub, key, name, createdAt: new Date().toISOString() })
+      const hubs = (await getDoc<unknown[]>(sub, 'HUBS')) ?? []
+      hubs.push({ hubId, name, pairedAt: new Date().toISOString() })
+      await putDoc(sub, 'HUBS', hubs.slice(0, 10))
+      return json(200, { hubId, key, apiUrl: `https://${event.requestContext.domainName}` })
+    }
+
+    if (path === '/api/smarthome/hubs' && method === 'GET') {
+      const hubs = (await getDoc<{ hubId: string; name: string; pairedAt: string }[]>(sub, 'HUBS')) ?? []
+      const hd = await getDoc<{ seen?: Record<string, string> }>(sub, 'HUBDEVICES')
+      return json(200, { hubs: hubs.map((h) => ({ ...h, lastSeen: hd?.seen?.[h.hubId] ?? null })) })
+    }
+
+    if (path === '/api/smarthome/hub-remove' && method === 'POST') {
+      if (!can('smart')) return json(403, { error: '허브 삭제 권한이 없습니다. 소유자에게 요청하세요.' })
+      const { hubId } = JSON.parse(event.body ?? '{}')
+      const hubs = (await getDoc<{ hubId: string }[]>(sub, 'HUBS')) ?? []
+      await Promise.all([
+        putDoc(sub, 'HUBS', hubs.filter((h) => h.hubId !== hubId)),
+        putDoc(`HUB:${hubId}`, 'MAP', { sub: '', key: '', revokedAt: new Date().toISOString() }),
+      ])
+      // 이 허브가 보고했던 기기·상태 제거
+      const hd = await getDoc<{ devices: { deviceId?: string }[]; statuses: Record<string, unknown>; seen: Record<string, string> }>(sub, 'HUBDEVICES')
+      if (hd) {
+        hd.devices = hd.devices.filter((d) => !String(d.deviceId ?? '').startsWith(`${hubId}:`))
+        for (const k of Object.keys(hd.statuses)) if (k.startsWith(`${hubId}:`)) delete hd.statuses[k]
+        delete hd.seen[String(hubId)]
+        await putDoc(sub, 'HUBDEVICES', hd)
+      }
+      return json(200, { ok: true })
+    }
+
     // 헤이홈 계정 연동 — 인증정보(client_id/secret/appKey) + 헤이홈 로그인으로
     // 토큰을 발급받아 저장. 비밀번호는 발급 요청에만 쓰고 저장하지 않는다.
     if (path === '/api/smarthome/hejhome-login' && method === 'POST') {
@@ -449,6 +538,9 @@ export async function handler(
           if (tok) out.push(...(await hejListDevices(tok)))
         } catch (e) { errors.push(`헤이홈: ${e instanceof Error ? e.message : e}`) }
       }
+      // 스테이프라이스 허브가 보고한 기기 (허브 에이전트가 30초 주기로 갱신)
+      const hubDoc = await getDoc<{ devices?: SmartDevice[] }>(sub, 'HUBDEVICES')
+      if (hubDoc?.devices?.length) out.push(...hubDoc.devices)
       if (out.length > 0) {
         // 전체 doc 스프레드로 저장 — scenes/schedules 등 다른 필드 보존
         await putDoc(sub, 'SMARTHOME', {
@@ -467,9 +559,23 @@ export async function handler(
       if (!smart) return json(200, { statuses: [] })
       const stTok = smart.config.smartthings ? await stTokenFor(sub, smart).catch(() => null) : null
       const hejTok = smart.config.hejhome ? await hejTokenFor(sub, smart).catch(() => null) : null
+      const hubDoc = (smart.devices ?? []).some((d) => d.provider === 'hub')
+        ? await getDoc<{ statuses?: Record<string, DeviceStatus>; seen?: Record<string, string> }>(sub, 'HUBDEVICES')
+        : null
       const statuses: (DeviceStatus & { provider: string })[] = []
       for (const d of (smart.devices ?? []).slice(0, 20)) {
         try {
+          if (d.provider === 'hub') {
+            // 허브 보고 상태 — 3분 내 접속 기록이 있어야 온라인으로 간주
+            const hubId = d.deviceId.split(':')[0]
+            const seenAt = hubDoc?.seen?.[hubId]
+            const fresh = seenAt && Date.now() - Date.parse(seenAt) < 3 * 60_000
+            const s = fresh ? hubDoc?.statuses?.[d.deviceId] : null
+            statuses.push(s
+              ? { ...s, deviceId: d.deviceId, online: true, provider: 'hub' }
+              : { deviceId: d.deviceId, online: false, provider: 'hub' })
+            continue
+          }
           const s = d.provider === 'smartthings' && stTok
             ? await stStatus(stTok, d.deviceId)
             : d.provider === 'tuya' && smart.config.tuya
@@ -516,6 +622,14 @@ export async function handler(
           const tok = await hejTokenFor(sub, smart)
           if (!tok) return json(400, { error: '헤이홈 토큰이 없습니다. 다시 연동해 주세요.' })
           await hejCommand(tok, String(deviceId), command)
+        } else if (provider === 'hub') {
+          if (command !== 'on' && command !== 'off') return json(400, { error: '허브 기기는 현재 켜기/끄기만 지원합니다' })
+          const hubId = String(deviceId).split(':')[0]
+          const map = await getDoc<{ sub: string }>(`HUB:${hubId}`, 'MAP')
+          if (!map || map.sub !== sub) return json(400, { error: '내 계정에 연결된 허브가 아닙니다' })
+          const q = (await getDoc<{ items: unknown[] }>(`HUB:${hubId}`, 'QUEUE')) ?? { items: [] }
+          q.items.push({ id: randomBytes(6).toString('hex'), deviceId: String(deviceId), command, ts: new Date().toISOString() })
+          await putDoc(`HUB:${hubId}`, 'QUEUE', { items: q.items.slice(-20) })
         } else {
           return json(400, { error: '해당 provider가 연동되지 않았습니다' })
         }

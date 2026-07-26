@@ -16,7 +16,7 @@ const ST_CLIENT_ID = process.env.ST_OAUTH_CLIENT_ID || undefined
 const ST_CLIENT_SECRET = process.env.ST_OAUTH_CLIENT_SECRET || undefined
 
 interface MappedDevice {
-  provider: 'smartthings' | 'tuya' | 'hejhome'
+  provider: 'smartthings' | 'tuya' | 'hejhome' | 'hub'
   deviceId: string
   name: string
   listingId?: string
@@ -220,17 +220,28 @@ export async function handler(): Promise<void> {
 
       // ── 상태 샘플링: 켬/끔 감지 + 가동시간(분) 적산 — 15분 주기라 15분 해상도
       const nowIso = new Date().toISOString()
+      const hubDoc = smart.devices.some((d) => d.provider === 'hub')
+        ? await getDoc<{ statuses?: Record<string, { switch?: 'on' | 'off' }>; seen?: Record<string, string> }>(sub, 'HUBDEVICES')
+        : null
       for (const d of smart.devices.slice(0, 20)) {
         let sw: 'on' | 'off' | undefined
         let sampled = false
         try {
-          const s = d.provider === 'smartthings' && stTok
-            ? await stStatus(stTok, d.deviceId)
-            : d.provider === 'tuya' && smart.config.tuya
-              ? await tuyaStatus(smart.config.tuya, d.deviceId)
-              : d.provider === 'hejhome' && hejTok
-                ? await hejStatus(hejTok, d.deviceId)
-                : null
+          if (d.provider === 'hub') {
+            const seenAt = hubDoc?.seen?.[d.deviceId.split(':')[0]]
+            if (seenAt && Date.now() - Date.parse(seenAt) < 3 * 60_000) {
+              sw = hubDoc?.statuses?.[d.deviceId]?.switch
+              sampled = true
+            }
+          }
+          const s = sampled ? null
+            : d.provider === 'smartthings' && stTok
+              ? await stStatus(stTok, d.deviceId)
+              : d.provider === 'tuya' && smart.config.tuya
+                ? await tuyaStatus(smart.config.tuya, d.deviceId)
+                : d.provider === 'hejhome' && hejTok
+                  ? await hejStatus(hejTok, d.deviceId)
+                  : null
           if (s) { sw = s.switch; sampled = true }
         } catch {
           // 오프라인/일시 오류 — 이번 샘플은 건너뜀
@@ -288,5 +299,11 @@ async function sendCommand(
     await tuyaCommand(config.tuya, device.deviceId, cmd)
   } else if (device.provider === 'hejhome' && hejTok) {
     await hejCommand(hejTok, device.deviceId, cmd)
+  } else if (device.provider === 'hub') {
+    // 허브 명령 큐에 적재 — 허브 에이전트가 3초 주기로 받아 실행
+    const hubId = device.deviceId.split(':')[0]
+    const q = (await getDoc<{ items: unknown[] }>(`HUB:${hubId}`, 'QUEUE')) ?? { items: [] }
+    q.items.push({ id: `auto-${Date.now()}`, deviceId: device.deviceId, command: cmd, ts: new Date().toISOString() })
+    await putDoc(`HUB:${hubId}`, 'QUEUE', { items: q.items.slice(-20) })
   }
 }
