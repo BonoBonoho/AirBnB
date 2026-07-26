@@ -14,6 +14,9 @@ import Login from '../pages/Login'
 const LS_LISTINGS = 'stayprice.listings.v1'
 const LS_OVERRIDES = 'stayprice.overrides.v1'
 const LS_WORKSPACE = 'stayprice.workspace.v1'
+const LS_MODE = 'stayprice.mode.v1'
+
+export type AppMode = 'host' | 'home'
 
 interface Store {
   listings: Listing[]
@@ -80,6 +83,9 @@ interface Store {
     /** 현재 워크스페이스에서의 내 권한 ('owner' = 전체) */
     perms: 'owner' | CoPerms
   } | null
+  /** 앱 모드 — 호스트(전체 기능) / 집(스마트홈만). null = 첫 접속(선택 화면 표시) */
+  mode: AppMode | null
+  setMode: (m: AppMode) => void
   addListing: (listing: Listing) => void
   deleteListing: (id: string) => void
   updateListing: (id: string, patch: Partial<Listing>) => void
@@ -244,6 +250,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [inquiries, setInquiries] = useState<Inquiry[]>([])
   const [guestNotes, setGuestNotes] = useState<Record<string, string>>({})
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [mode, setModeState] = useState<AppMode | null>(() => {
+    const v = localStorage.getItem(LS_MODE)
+    return v === 'host' || v === 'home' ? v : null
+  })
   // 선택된 워크스페이스는 첫 렌더 전에 API 모듈에 주입 (이후 모든 요청에 헤더로 실림)
   const [wsCurrent] = useState<string | null>(() => {
     const saved = localStorage.getItem(LS_WORKSPACE)
@@ -421,6 +431,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               : ('owner' as const),
           }
         : null,
+      mode,
+      setMode: (m: AppMode) => {
+        localStorage.setItem(LS_MODE, m)
+        setModeState(m)
+      },
       addListing: (listing) => setListings((prev) => [...prev, listing]),
       deleteListing: (id) => {
         setListings((prev) => prev.filter((l) => l.id !== id))
@@ -441,7 +456,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setOverrides([])
       },
     }),
-    [listings, bookings, overrides, config, inboundKey, actuals, verification, market, formQuestions, formResponses, formLinks, inquiries, guestNotes, workspaces, wsCurrent],
+    [listings, bookings, overrides, config, inboundKey, actuals, verification, market, formQuestions, formResponses, formLinks, inquiries, guestNotes, workspaces, wsCurrent, mode],
   )
 
   if (config === undefined) {

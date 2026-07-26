@@ -57,7 +57,7 @@ function eventLabel(ev: string): string {
 const BY_LABEL = { user: '앱', auto: '자동화', sample: '감지' } as const
 
 export default function SmartRoom() {
-  const { listings, cloud } = useStore()
+  const { listings, cloud, mode } = useStore()
   const location = useLocation()
   const navigate = useNavigate()
   const [state, setState] = useState<SmartHomeState>(EMPTY)
@@ -424,7 +424,12 @@ export default function SmartRoom() {
   return (
     <div>
       <div className="flex items-start justify-between gap-3">
-        <PageTitle title="스마트룸" desc="객실 온도 모니터링 + 조명·에어컨 제어 + 예약 연동 자동화" />
+        <PageTitle
+          title={mode === 'home' ? '우리집 스마트홈' : '스마트룸'}
+          desc={mode === 'home'
+            ? '기기 켜고 끄기 + 원탭 씬 + 시간 예약'
+            : '객실 온도 모니터링 + 조명·에어컨 제어 + 예약 연동 자동화'}
+        />
         <button
           onClick={() => setShowSetup(!showSetup)}
           className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
@@ -552,7 +557,7 @@ export default function SmartRoom() {
 
       {available.length > 0 && (
         <Card className="mb-4">
-          <div className="font-semibold mb-1">발견된 기기 → 숙소에 배정</div>
+          <div className="font-semibold mb-1">발견된 기기 → {mode === 'home' ? '공간에 배정' : '숙소에 배정'}</div>
           <p className="text-xs text-slate-400 mb-3">기기 목록은 자동 저장되어 새로고침해도 유지됩니다.</p>
           <div className="space-y-2">
             {available.map((d) => {
@@ -580,8 +585,8 @@ export default function SmartRoom() {
                     className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs shrink-0"
                   >
                     <option value="">배정 안 함</option>
-                    <option value="@home">🏠 우리집 (숙소 아님)</option>
-                    {listings.filter((l) => l.active).map((l) => (
+                    <option value="@home">🏠 우리집{mode === 'home' ? '' : ' (숙소 아님)'}</option>
+                    {mode !== 'home' && listings.filter((l) => l.active).map((l) => (
                       <option key={l.id} value={l.id}>{l.thumbnail} {l.name}</option>
                     ))}
                   </select>
@@ -636,7 +641,7 @@ export default function SmartRoom() {
                       className="text-xs text-rose-500 shrink-0">삭제</button>
                   </div>
                   <div className="grid sm:grid-cols-2 gap-1.5">
-                    {state.devices.map((d) => {
+                    {(mode === 'home' ? state.devices.filter((d) => d.listingId === '@home') : state.devices).map((d) => {
                       const act = sc.actions.find((a) => a.deviceId === d.deviceId)
                       return (
                         <div key={d.deviceId} className="flex items-center justify-between gap-2 text-xs">
@@ -717,7 +722,8 @@ export default function SmartRoom() {
       )}
 
       {[
-        ...listings.filter((l) => l.active).map((l) => ({ id: l.id, name: l.name, thumbnail: l.thumbnail, isHome: false })),
+        // 집 모드에서는 숙소 카드를 감추고 우리집만 표시
+        ...(mode === 'home' ? [] : listings.filter((l) => l.active).map((l) => ({ id: l.id, name: l.name, thumbnail: l.thumbnail, isHome: false }))),
         { id: '@home', name: '우리집', thumbnail: '🏠', isHome: true },
       ].map((l) => {
         const devices = state.devices.filter((d) => d.listingId === l.id)

@@ -1,6 +1,9 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useStore } from '../lib/store'
 import type { CoPerms } from '../lib/api'
+
+/** 집 모드에서 보여줄 메뉴 (스마트홈 관련만) */
+const HOME_PATHS = new Set(['/smartroom', '/door'])
 
 type NavPerm = 'view' | keyof CoPerms | 'owner'
 
@@ -20,7 +23,8 @@ const NAV: { to: string; label: string; icon: string; perm: NavPerm }[] = [
 ]
 
 export default function Layout() {
-  const { cloud } = useStore()
+  const { cloud, mode, setMode } = useStore()
+  const location = useLocation()
 
   const allowed = (perm: NavPerm): boolean => {
     if (!cloud) return perm !== 'owner' // 데모 모드: 관리자 메뉴만 숨김
@@ -29,7 +33,51 @@ export default function Layout() {
     if (perm === 'view') return true
     return !!cloud.perms[perm]
   }
-  const nav = NAV.filter((item) => allowed(item.perm))
+  const nav = NAV.filter((item) => allowed(item.perm) && (mode !== 'home' || HOME_PATHS.has(item.to)))
+
+  // 첫 접속: 용도 선택 화면
+  if (mode === null) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-6 px-6 bg-slate-50">
+        <div className="text-center">
+          <div className="text-2xl font-bold text-rose-500 mb-1">스테이프라이스</div>
+          <p className="text-sm text-slate-500">어떤 용도로 사용하시나요? 언제든 왼쪽 메뉴에서 전환할 수 있어요.</p>
+        </div>
+        <div className="grid sm:grid-cols-2 gap-4 w-full max-w-lg">
+          <button onClick={() => setMode('host')}
+            className="rounded-2xl border-2 border-rose-200 bg-white p-6 text-left hover:border-rose-400 hover:shadow-md transition-all">
+            <div className="text-3xl mb-2">🏨</div>
+            <div className="font-bold mb-1">호스트 모드</div>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              숙소 운영 전체 — 가격·예약 캘린더·수익·게스트 관리·채널 연동·스마트룸
+            </p>
+          </button>
+          <button onClick={() => setMode('home')}
+            className="rounded-2xl border-2 border-indigo-200 bg-white p-6 text-left hover:border-indigo-400 hover:shadow-md transition-all">
+            <div className="text-3xl mb-2">🏠</div>
+            <div className="font-bold mb-1">집 모드</div>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              우리집 스마트홈만 간단하게 — 기기 켜고 끄기·원탭 씬·시간 예약
+            </p>
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // 집 모드에서 호스트 전용 화면에 있으면 스마트룸으로
+  if (mode === 'home' && !HOME_PATHS.has(location.pathname)) {
+    return <Navigate to="/smartroom" replace />
+  }
+
+  const modeSwitch = (
+    <button
+      onClick={() => setMode(mode === 'home' ? 'host' : 'home')}
+      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-100"
+    >
+      {mode === 'home' ? '🏨 호스트 모드로 전환' : '🏠 집 모드로 전환'}
+    </button>
+  )
 
   const wsSwitcher = cloud && cloud.workspaces.list.length > 0 && (
     <select
@@ -50,8 +98,11 @@ export default function Layout() {
       <aside className="hidden md:flex w-56 shrink-0 border-r border-slate-200 bg-white flex-col">
         <div className="px-5 py-5 border-b border-slate-100">
           <div className="text-xl font-bold text-rose-500">스테이프라이스</div>
-          <div className="text-xs text-slate-400 mt-0.5">숙소 수익 관리 · 자동 가격</div>
-          {wsSwitcher && <div className="mt-3">{wsSwitcher}</div>}
+          <div className="text-xs text-slate-400 mt-0.5">
+            {mode === 'home' ? '🏠 우리집 스마트홈' : '숙소 수익 관리 · 자동 가격'}
+          </div>
+          {mode !== 'home' && wsSwitcher && <div className="mt-3">{wsSwitcher}</div>}
+          <div className="mt-3">{modeSwitch}</div>
         </div>
         <nav className="flex-1 p-3 space-y-1">
           {nav.map((item) => (
@@ -90,9 +141,17 @@ export default function Layout() {
       <div className="md:hidden sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200"
         style={{ paddingTop: 'env(safe-area-inset-top)' }}>
         <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-1.5">
-          <div className="text-lg font-bold text-rose-500 shrink-0">스테이프라이스</div>
+          <div className="text-lg font-bold text-rose-500 shrink-0">
+            스테이프라이스{mode === 'home' && <span className="ml-1 text-xs font-medium text-indigo-500">집</span>}
+          </div>
           <div className="flex items-center gap-2 min-w-0">
-            {wsSwitcher}
+            {mode !== 'home' && wsSwitcher}
+            <button
+              onClick={() => setMode(mode === 'home' ? 'host' : 'home')}
+              className="text-[11px] text-slate-500 underline shrink-0"
+            >
+              {mode === 'home' ? '호스트 모드' : '집 모드'}
+            </button>
             {cloud && (
               <button onClick={cloud.signOut} className="text-[11px] text-slate-400 underline shrink-0">로그아웃</button>
             )}
