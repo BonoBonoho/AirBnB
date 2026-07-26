@@ -9,6 +9,7 @@ import { scanMarket } from './market-scan'
 import { renderListingPage, renderSitemap } from './public-page'
 import {
   stListDevices, stStatus, stCommand, tuyaListDevices, tuyaStatus, tuyaCommand,
+  hejListDevices, hejStatus, hejCommand,
   resolveStToken, stAuthorizeUrl, stExchangeCode,
 } from './smarthome'
 import type { SmartHomeConfig, SmartDevice, DeviceStatus, SmartLog, StCommandName } from './smarthome'
@@ -407,6 +408,10 @@ export async function handler(
         try { out.push(...(await tuyaListDevices(cfg.tuya))) }
         catch (e) { errors.push(`Tuya: ${e instanceof Error ? e.message : e}`) }
       }
+      if (cfg.hejhome?.token) {
+        try { out.push(...(await hejListDevices(cfg.hejhome.token))) }
+        catch (e) { errors.push(`헤이홈: ${e instanceof Error ? e.message : e}`) }
+      }
       if (out.length > 0) {
         await putDoc(sub, 'SMARTHOME', {
           config: smart.config,
@@ -430,7 +435,9 @@ export async function handler(
             ? await stStatus(stTok, d.deviceId)
             : d.provider === 'tuya' && smart.config.tuya
               ? await tuyaStatus(smart.config.tuya, d.deviceId)
-              : null
+              : d.provider === 'hejhome' && smart.config.hejhome
+                ? await hejStatus(smart.config.hejhome.token, d.deviceId)
+                : null
           if (s) statuses.push({ ...s, provider: d.provider })
         } catch {
           statuses.push({ deviceId: d.deviceId, online: false, provider: d.provider })
@@ -461,6 +468,9 @@ export async function handler(
         } else if (provider === 'tuya' && smart.config.tuya) {
           if (command !== 'on' && command !== 'off') return json(400, { error: 'Tuya 기기는 켜기/끄기만 지원합니다' })
           await tuyaCommand(smart.config.tuya, String(deviceId), command)
+        } else if (provider === 'hejhome' && smart.config.hejhome) {
+          if (command !== 'on' && command !== 'off') return json(400, { error: '헤이홈 기기는 켜기/끄기만 지원합니다' })
+          await hejCommand(smart.config.hejhome.token, String(deviceId), command)
         } else {
           return json(400, { error: '해당 provider가 연동되지 않았습니다' })
         }

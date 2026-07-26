@@ -2,7 +2,7 @@
 import { createHmac } from 'node:crypto'
 
 export interface SmartDevice {
-  provider: 'smartthings' | 'tuya'
+  provider: 'smartthings' | 'tuya' | 'hejhome'
   deviceId: string
   name: string
   /** 감지된 기능: temp/humidity/switch/ac */
@@ -45,6 +45,7 @@ export interface StOauth {
 export interface SmartHomeConfig {
   smartthings?: { token?: string; oauth?: StOauth }
   tuya?: { accessId: string; accessKey: string; region: 'us' | 'eu' | 'cn' | 'in' }
+  hejhome?: { token: string }
 }
 
 /** 기기 사용 기록 — 15분 샘플링 기반 가동시간 + 켬/끔 이벤트 (DynamoDB 400KB 제한 때문에 집계형) */
@@ -355,6 +356,83 @@ export async function tuyaCommand(
     await tuyaRequest(cfg, 'POST', `/v1.0/devices/${deviceId}/commands`, {
       commands: [{ code: 'switch', value: command === 'on' }],
     }, token)
+  })
+}
+
+// ─── 헤이홈(고퀄) 오픈API ──────────────────────────────────────
+// 문서: goqual.io/openapi — Bearer 토큰 인증. control 바디의 "requirments"는
+// 헤이홈 API 자체의 철자이므로 고치면 안 된다.
+
+const HEJ = 'https://goqual.io/openapi'
+
+async function hejFetch(token: string, path: string, init?: RequestInit): Promise<unknown> {
+  const res = await fetch(`${HEJ}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      ...(init?.headers ?? {}),
+    },
+    signal: AbortSignal.timeout(10000),
+  })
+  if (!res.ok) throw new Error(`헤이홈 API 오류 (${res.status})`)
+  const text = await res.text()
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+function hejCaps(deviceType: string): string[] {
+  const t = deviceType.toLowerCase()
+  const caps: string[] = []
+  if (/th|temp|hum|sensor/.test(t)) {
+    caps.push('temp', 'humidity')
+  }
+  if (/plug|outlet|switch|light|lamp|bulb|curtain|boiler/.test(t)) caps.push('switch')
+  if (/aircon|air_?con/.test(t)) caps.push('switch', 'ac')
+  return caps
+}
+
+export async function hejListDevices(token: string): Promise<SmartDevice[]> {
+  const r = (await hejFetch(token, '/devices')) as
+    | { id: string | number; name?: string; deviceType?: string; modelName?: string; roomName?: string }[]
+    | null
+  if (!Array.isArray(r)) return []
+  return r.map((d) => ({
+    provider: 'hejhome' as const,
+    deviceId: String(d.id),
+    name: d.name || d.deviceType || String(d.id),
+    caps: hejCaps(String(d.deviceType ?? '')),
+    room: d.roomName || undefined,
+    model: d.modelName || d.deviceType || undefined,
+  }))
+}
+
+export async function hejStatus(token: string, deviceId: string): Promise<DeviceStatus> {
+  const r = (await hejFetch(token, `/device/${encodeURIComponent(deviceId)}`)) as
+    | { deviceState?: Record<string, unknown> }
+    | { deviceState?: Record<string, unknown> }[]
+    | null
+  const state = (Array.isArray(r) ? r[0]?.deviceState : r?.deviceState) ?? {}
+  const power = state.power ?? state.power1 ?? state.switch
+  const tempRaw = numOrU(state.temperature ?? state.curTemp)
+  return {
+    deviceId,
+    online: true,
+    // 일부 센서는 10배 스케일(274 = 27.4도)로 보고한다
+    temperature: tempRaw !== undefined && Math.abs(tempRaw) > 60 ? tempRaw / 10 : tempRaw,
+    humidity: numOrU(state.humidity),
+    switch: power === true || power === 'true' ? 'on' : power === false || power === 'false' ? 'off' : undefined,
+    power: numOrU(state.curPower ?? state.powerConsumption),
+  }
+}
+
+export async function hejCommand(token: string, deviceId: string, command: 'on' | 'off'): Promise<void> {
+  await hejFetch(token, `/control/${encodeURIComponent(deviceId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ requirments: { power: command === 'on' } }),
   })
 }
 

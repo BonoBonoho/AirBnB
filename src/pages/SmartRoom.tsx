@@ -72,6 +72,7 @@ export default function SmartRoom() {
   const [tuyaId, setTuyaId] = useState('')
   const [tuyaKey, setTuyaKey] = useState('')
   const [tuyaRegion, setTuyaRegion] = useState<'us' | 'eu' | 'cn' | 'in'>('us')
+  const [hejToken, setHejToken] = useState('')
   const [editId, setEditId] = useState('')
   const [editAlias, setEditAlias] = useState('')
   const [editZone, setEditZone] = useState('')
@@ -95,7 +96,7 @@ export default function SmartRoom() {
       setAvailable(s.available ?? [])
       setLoaded(true)
       // 아직 연동 전이거나 배정된 기기가 없으면 설정 섹션을 펼쳐서 시작
-      setShowSetup(!(s.config?.smartthings || s.config?.tuya) || !(s.devices?.length))
+      setShowSetup(!(s.config?.smartthings || s.config?.tuya || s.config?.hejhome) || !(s.devices?.length))
       if (s.devices?.length) refreshStatus()
     }).catch(() => setLoaded(true))
   }, [cloud, refreshStatus])
@@ -129,9 +130,10 @@ export default function SmartRoom() {
       const config = { ...state.config }
       if (stToken.trim()) config.smartthings = { ...config.smartthings, token: stToken.trim() }
       if (tuyaId.trim() && tuyaKey.trim()) config.tuya = { accessId: tuyaId.trim(), accessKey: tuyaKey.trim(), region: tuyaRegion }
+      if (hejToken.trim()) config.hejhome = { token: hejToken.trim() }
       await cloud.smart.put({ config })
       setState((p) => ({ ...p, config }))
-      setStToken(''); setTuyaId(''); setTuyaKey('')
+      setStToken(''); setTuyaId(''); setTuyaKey(''); setHejToken('')
       const r = await cloud.smart.listDevices()
       setAvailable(r.devices)
       setMsg(r.errors.length ? `일부 실패: ${r.errors.join(' / ')}` : `✓ 연동 성공 — 기기 ${r.devices.length}개 발견`)
@@ -220,7 +222,8 @@ export default function SmartRoom() {
     }
   }
 
-  const connected = !!(state.config.smartthings || state.config.tuya)
+  const connected = !!(state.config.smartthings || state.config.tuya || state.config.hejhome)
+  const PROVIDER_LABEL = { smartthings: '스마트싱스', tuya: 'Tuya', hejhome: '헤이홈' } as const
   const stOauth = !!state.config.smartthings?.oauth
 
   const ZONE_DEFAULTS = ['거실', '안방', '작은방', '주방', '테라스', '1층', '2층']
@@ -414,6 +417,21 @@ export default function SmartRoom() {
             <input type="password" value={tuyaKey} onChange={(e) => setTuyaKey(e.target.value)} placeholder="Access Secret"
               className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono" />
           </div>
+          <div className="rounded-xl border border-slate-200 p-3.5">
+            <div className="text-sm font-semibold mb-1.5">
+              헤이홈 (고퀄) {state.config.hejhome && <span className="text-emerald-600 text-xs">● 연동됨</span>}
+            </div>
+            <p className="text-xs text-slate-400 mb-2">
+              헤이홈 오픈API 액세스 토큰을 붙여넣으세요 (헤이홈 앱에 등록된 기기 전체가 연동됩니다)
+            </p>
+            <input
+              type="password"
+              value={hejToken}
+              onChange={(e) => setHejToken(e.target.value)}
+              placeholder="헤이홈 액세스 토큰"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+            />
+          </div>
         </div>
         <div className="flex items-center gap-3 mt-3 flex-wrap">
           <button onClick={saveConfig} disabled={busy === 'config'}
@@ -448,7 +466,7 @@ export default function SmartRoom() {
                       </span>
                     )}
                     <span className="text-xs text-slate-400 ml-2">
-                      {d.provider === 'smartthings' ? '스마트싱스' : 'Tuya'}
+                      {PROVIDER_LABEL[d.provider] ?? d.provider}
                       {d.model ? ` · ${d.model}` : ''}
                       {' · '}
                       {d.caps.map((c) => ({ temp: '온도', humidity: '습도', switch: '스위치', ac: '에어컨' }[c] ?? c)).join('·') || '기타'}
