@@ -8,7 +8,7 @@ import { ScanCommand } from '@aws-sdk/lib-dynamodb'
 import { ddb, TABLE_NAME } from './shared'
 import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb'
 import {
-  stCommand, tuyaCommand, stStatus, tuyaStatus, resolveStToken,
+  stCommand, tuyaCommand, stStatus, tuyaStatus, hejStatus, hejCommand, resolveStToken,
   type SmartHomeConfig, type SmartLog,
 } from './smarthome'
 
@@ -16,7 +16,7 @@ const ST_CLIENT_ID = process.env.ST_OAUTH_CLIENT_ID || undefined
 const ST_CLIENT_SECRET = process.env.ST_OAUTH_CLIENT_SECRET || undefined
 
 interface MappedDevice {
-  provider: 'smartthings' | 'tuya'
+  provider: 'smartthings' | 'tuya' | 'hejhome'
   deviceId: string
   name: string
   listingId?: string
@@ -177,7 +177,9 @@ export async function handler(): Promise<void> {
             ? await stStatus(stTok, d.deviceId)
             : d.provider === 'tuya' && smart.config.tuya
               ? await tuyaStatus(smart.config.tuya, d.deviceId)
-              : null
+              : d.provider === 'hejhome' && smart.config.hejhome
+                ? await hejStatus(smart.config.hejhome.token, d.deviceId)
+                : null
           if (s) { sw = s.switch; sampled = true }
         } catch {
           // 오프라인/일시 오류 — 이번 샘플은 건너뜀
@@ -232,5 +234,7 @@ async function sendCommand(
     }
   } else if (device.provider === 'tuya' && config.tuya) {
     await tuyaCommand(config.tuya, device.deviceId, cmd)
+  } else if (device.provider === 'hejhome' && config.hejhome) {
+    await hejCommand(config.hejhome.token, device.deviceId, cmd)
   }
 }

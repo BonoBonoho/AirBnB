@@ -24,7 +24,7 @@ export interface RemoteState {
 }
 
 export interface SmartDevice {
-  provider: 'smartthings' | 'tuya'
+  provider: 'smartthings' | 'tuya' | 'hejhome'
   deviceId: string
   name: string
   caps: string[]
@@ -64,6 +64,7 @@ export interface SmartHomeState {
   config: {
     smartthings?: { token?: string; oauth?: { expiresAt: number } }
     tuya?: { accessId: string; accessKey: string; region: 'us' | 'eu' | 'cn' | 'in' }
+    hejhome?: { token: string }
   }
   devices: SmartDevice[]
   rules: Record<string, { preheat?: boolean; preheatMinutes?: number; targetTemp?: number; autoOff?: boolean }>
