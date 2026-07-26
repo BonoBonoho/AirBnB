@@ -9,7 +9,7 @@ import { scanMarket } from './market-scan'
 import { renderListingPage, renderSitemap } from './public-page'
 import {
   stListDevices, stStatus, stCommand, tuyaListDevices, tuyaStatus, tuyaCommand,
-  hejListDevices, hejStatus, hejCommand,
+  hejListDevices, hejStatus, hejCommand, hejLogin, resolveHejToken,
   resolveStToken, stAuthorizeUrl, stExchangeCode,
 } from './smarthome'
 import type { SmartHomeConfig, SmartDevice, DeviceStatus, SmartLog, StCommandName } from './smarthome'
@@ -49,6 +49,14 @@ interface CohostMap {
 async function stTokenFor(sub: string, smart: SmartDoc): Promise<string | null> {
   return resolveStToken(smart.config.smartthings, ST_CLIENT_ID, ST_CLIENT_SECRET, async (oauth) => {
     smart.config.smartthings = { ...smart.config.smartthings, oauth }
+    await putDoc(sub, 'SMARTHOME', smart)
+  })
+}
+
+/** 헤이홈 토큰 결정 — 계정 연동이면 자동 갱신 후 저장, 아니면 수동 토큰 */
+async function hejTokenFor(sub: string, smart: SmartDoc): Promise<string | null> {
+  return resolveHejToken(smart.config.hejhome, async (oauth) => {
+    smart.config.hejhome = { ...smart.config.hejhome, oauth }
     await putDoc(sub, 'SMARTHOME', smart)
   })
 }
@@ -391,6 +399,31 @@ export async function handler(
       return json(200, { url: stAuthorizeUrl(ST_CLIENT_ID, redirectUri, state), redirectUri })
     }
 
+    // 헤이홈 계정 연동 — 인증정보(client_id/secret/appKey) + 헤이홈 로그인으로
+    // 토큰을 발급받아 저장. 비밀번호는 발급 요청에만 쓰고 저장하지 않는다.
+    if (path === '/api/smarthome/hejhome-login' && method === 'POST') {
+      if (!can('smart')) return json(403, { error: '헤이홈 연동 권한이 없습니다. 소유자에게 요청하세요.' })
+      const b = JSON.parse(event.body ?? '{}')
+      const clientId = String(b.clientId ?? '').trim()
+      const clientSecret = String(b.clientSecret ?? '').trim()
+      const appKey = String(b.appKey ?? '').trim()
+      const username = String(b.username ?? '').trim()
+      const password = String(b.password ?? '')
+      if (!clientId || !clientSecret || !appKey || !username || !password) {
+        return json(400, { error: '인증정보 3가지와 헤이홈 계정(아이디·비밀번호)을 모두 입력해 주세요' })
+      }
+      try {
+        const creds = { clientId, clientSecret, appKey }
+        const oauth = await hejLogin(creds, username, password)
+        const smart = (await getDoc<SmartDoc>(sub, 'SMARTHOME')) ?? { config: {}, devices: [], rules: {} }
+        smart.config.hejhome = { creds, oauth }
+        await putDoc(sub, 'SMARTHOME', smart)
+        return json(200, { ok: true, expiresAt: oauth.expiresAt })
+      } catch (e) {
+        return json(422, { error: e instanceof Error ? e.message : '헤이홈 연동 실패' })
+      }
+    }
+
     // 연동된 계정의 기기 목록 (양쪽 provider 합침) — 조회 결과는 저장해서 새로고침 후에도 유지
     if (path === '/api/smarthome/devices' && method === 'GET') {
       if (!can('smart')) return json(403, { error: '기기 불러오기 권한이 없습니다. 소유자에게 요청하세요.' })
@@ -408,9 +441,11 @@ export async function handler(
         try { out.push(...(await tuyaListDevices(cfg.tuya))) }
         catch (e) { errors.push(`Tuya: ${e instanceof Error ? e.message : e}`) }
       }
-      if (cfg.hejhome?.token) {
-        try { out.push(...(await hejListDevices(cfg.hejhome.token))) }
-        catch (e) { errors.push(`헤이홈: ${e instanceof Error ? e.message : e}`) }
+      if (cfg.hejhome) {
+        try {
+          const tok = await hejTokenFor(sub, smart)
+          if (tok) out.push(...(await hejListDevices(tok)))
+        } catch (e) { errors.push(`헤이홈: ${e instanceof Error ? e.message : e}`) }
       }
       if (out.length > 0) {
         await putDoc(sub, 'SMARTHOME', {
@@ -428,6 +463,7 @@ export async function handler(
       const smart = await getDoc<SmartDoc>(sub, 'SMARTHOME')
       if (!smart) return json(200, { statuses: [] })
       const stTok = smart.config.smartthings ? await stTokenFor(sub, smart).catch(() => null) : null
+      const hejTok = smart.config.hejhome ? await hejTokenFor(sub, smart).catch(() => null) : null
       const statuses: (DeviceStatus & { provider: string })[] = []
       for (const d of (smart.devices ?? []).slice(0, 20)) {
         try {
@@ -435,8 +471,8 @@ export async function handler(
             ? await stStatus(stTok, d.deviceId)
             : d.provider === 'tuya' && smart.config.tuya
               ? await tuyaStatus(smart.config.tuya, d.deviceId)
-              : d.provider === 'hejhome' && smart.config.hejhome
-                ? await hejStatus(smart.config.hejhome.token, d.deviceId)
+              : d.provider === 'hejhome' && hejTok
+                ? await hejStatus(hejTok, d.deviceId)
                 : null
           if (s) statuses.push({ ...s, provider: d.provider })
         } catch {
@@ -470,7 +506,9 @@ export async function handler(
           await tuyaCommand(smart.config.tuya, String(deviceId), command)
         } else if (provider === 'hejhome' && smart.config.hejhome) {
           if (command !== 'on' && command !== 'off') return json(400, { error: '헤이홈 기기는 켜기/끄기만 지원합니다' })
-          await hejCommand(smart.config.hejhome.token, String(deviceId), command)
+          const tok = await hejTokenFor(sub, smart)
+          if (!tok) return json(400, { error: '헤이홈 토큰이 없습니다. 다시 연동해 주세요.' })
+          await hejCommand(tok, String(deviceId), command)
         } else {
           return json(400, { error: '해당 provider가 연동되지 않았습니다' })
         }

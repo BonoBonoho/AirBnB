@@ -1,5 +1,5 @@
-/** 스마트홈 드라이버 — 삼성 스마트싱스(공식 API) + Tuya OpenAPI */
-import { createHmac } from 'node:crypto'
+/** 스마트홈 드라이버 — 삼성 스마트싱스(공식 API) + Tuya OpenAPI + 헤이홈(고퀄) */
+import { createHmac, createCipheriv } from 'node:crypto'
 
 export interface SmartDevice {
   provider: 'smartthings' | 'tuya' | 'hejhome'
@@ -42,10 +42,17 @@ export interface StOauth {
   expiresAt: number
 }
 
+/** 헤이홈 오픈API 인증정보 — 사용신청 후 고퀄이 메일로 발급 */
+export interface HejCreds {
+  clientId: string
+  clientSecret: string
+  appKey: string
+}
+
 export interface SmartHomeConfig {
   smartthings?: { token?: string; oauth?: StOauth }
   tuya?: { accessId: string; accessKey: string; region: 'us' | 'eu' | 'cn' | 'in' }
-  hejhome?: { token: string }
+  hejhome?: { token?: string; creds?: HejCreds; oauth?: StOauth }
 }
 
 /** 기기 사용 기록 — 15분 샘플링 기반 가동시간 + 켬/끔 이벤트 (DynamoDB 400KB 제한 때문에 집계형) */
@@ -360,10 +367,79 @@ export async function tuyaCommand(
 }
 
 // ─── 헤이홈(고퀄) 오픈API ──────────────────────────────────────
-// 문서: goqual.io/openapi — Bearer 토큰 인증. control 바디의 "requirments"는
+// 문서: goqual.notion.site (헤이홈 OpenAPI) — Bearer 토큰 인증.
+// 토큰 발급은 client_id/secret/appKey(사용신청 후 메일 발급)로
+// 로그인 정보를 AES-256-CBC(appKey 앞 32자=키, 앞 16자=IV)로 암호화해
+// POST /openapi/token 에 보내는 방식. control 바디의 "requirments"는
 // 헤이홈 API 자체의 철자이므로 고치면 안 된다.
 
 const HEJ = 'https://goqual.io/openapi'
+
+function hejEncrypt(appKey: string, payload: unknown): string {
+  const cipher = createCipheriv(
+    'aes-256-cbc',
+    Buffer.from(appKey.slice(0, 32), 'utf8'),
+    Buffer.from(appKey.slice(0, 16), 'utf8'),
+  )
+  const enc = Buffer.concat([cipher.update(JSON.stringify(payload), 'utf8'), cipher.final()])
+  // 파이썬 urlsafe_b64encode와 동일: +/ → -_, 패딩(=) 유지
+  return enc.toString('base64').replace(/\+/g, '-').replace(/\//g, '_')
+}
+
+async function hejTokenRequest(
+  creds: HejCreds, path: '/token' | '/token/refresh', payload: Record<string, string>,
+): Promise<StOauth> {
+  if (creds.appKey.length < 32) throw new Error('헤이홈 App Key가 올바르지 않습니다 (32자 이상이어야 합니다)')
+  const data = hejEncrypt(creds.appKey, {
+    client_id: creds.clientId,
+    client_secret: creds.clientSecret,
+    ...payload,
+  })
+  const res = await fetch(`${HEJ}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data }),
+    signal: AbortSignal.timeout(10000),
+  })
+  const text = await res.text()
+  let parsed: { access_token?: string; refresh_token?: string; expires_in?: number } = {}
+  try { parsed = JSON.parse(text) } catch { /* 아래에서 오류 처리 */ }
+  if (!res.ok || !parsed.access_token) {
+    throw new Error(`헤이홈 토큰 발급 실패 (${res.status}) — 인증정보와 헤이홈 계정을 확인해 주세요`)
+  }
+  return {
+    accessToken: parsed.access_token,
+    refreshToken: parsed.refresh_token ?? payload.refresh_token ?? '',
+    expiresAt: Date.now() + (parsed.expires_in ?? 86400) * 1000,
+  }
+}
+
+/** 헤이홈 계정 로그인으로 토큰 발급 — 비밀번호는 이 요청에만 쓰이고 저장하지 않는다 */
+export function hejLogin(creds: HejCreds, username: string, password: string): Promise<StOauth> {
+  return hejTokenRequest(creds, '/token', { grant_type: 'password', username, password })
+}
+
+export function hejRefresh(creds: HejCreds, refreshToken: string): Promise<StOauth> {
+  return hejTokenRequest(creds, '/token/refresh', { grant_type: 'refresh_token', refresh_token: refreshToken })
+}
+
+/** 사용할 헤이홈 토큰 결정 — 만료 30분 전 자동 갱신 후 persist로 저장. 수동 토큰 폴백 */
+export async function resolveHejToken(
+  hej: SmartHomeConfig['hejhome'],
+  persist: (oauth: StOauth) => Promise<void>,
+): Promise<string | null> {
+  if (!hej) return null
+  if (hej.oauth) {
+    if (hej.oauth.expiresAt - Date.now() > 30 * 60 * 1000) return hej.oauth.accessToken
+    if (hej.creds && hej.oauth.refreshToken) {
+      const next = await hejRefresh(hej.creds, hej.oauth.refreshToken)
+      await persist(next)
+      return next.accessToken
+    }
+    return hej.oauth.accessToken // 갱신 불가 — 만료 임박 토큰이라도 시도
+  }
+  return hej.token ?? null
+}
 
 async function hejFetch(token: string, path: string, init?: RequestInit): Promise<unknown> {
   const res = await fetch(`${HEJ}${path}`, {

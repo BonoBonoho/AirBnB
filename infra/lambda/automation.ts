@@ -8,7 +8,7 @@ import { ScanCommand } from '@aws-sdk/lib-dynamodb'
 import { ddb, TABLE_NAME } from './shared'
 import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb'
 import {
-  stCommand, tuyaCommand, stStatus, tuyaStatus, hejStatus, hejCommand, resolveStToken,
+  stCommand, tuyaCommand, stStatus, tuyaStatus, hejStatus, hejCommand, resolveStToken, resolveHejToken,
   type SmartHomeConfig, type SmartLog,
 } from './smarthome'
 
@@ -110,6 +110,14 @@ export async function handler(): Promise<void> {
           }).catch((e) => { console.error(`st token refresh failed for ${sub}:`, e); return null })
         : null
 
+      // 헤이홈 토큰 — 계정 연동이면 자동 갱신 후 저장
+      const hejTok = smart.config.hejhome
+        ? await resolveHejToken(smart.config.hejhome, async (oauth) => {
+            smart.config.hejhome = { ...smart.config.hejhome, oauth }
+            await putDoc(sub, 'SMARTHOME', smart)
+          }).catch((e) => { console.error(`hej token refresh failed for ${sub}:`, e); return null })
+        : null
+
       for (const [listingId, rule] of Object.entries(rules)) {
         const devices = smart.devices.filter((d) => d.listingId === listingId)
         if (devices.length === 0) continue
@@ -125,7 +133,7 @@ export async function handler(): Promise<void> {
             const key = `preheat:${todayCheckin.id}`
             if (nowMin >= fireAt && !done[key]) {
               for (const d of devices.filter((x) => x.caps.includes('ac') || x.caps.includes('switch'))) {
-                await sendCommand(stTok, smart.config, d, 'on', rule.targetTemp)
+                await sendCommand(stTok, hejTok, smart.config, d, 'on', rule.targetTemp)
                   .then(() => { log.events.unshift({ ts: new Date().toISOString(), d: d.deviceId, ev: 'on', by: 'auto' }); logDirty = true })
                   .catch((e) => console.error('preheat fail', e))
               }
@@ -155,7 +163,7 @@ export async function handler(): Promise<void> {
             const key = `autooff:${checkoutToday.id}`
             if (!done[key]) {
               for (const d of devices.filter((x) => x.caps.includes('switch') || x.caps.includes('ac'))) {
-                await sendCommand(stTok, smart.config, d, 'off')
+                await sendCommand(stTok, hejTok, smart.config, d, 'off')
                   .then(() => { log.events.unshift({ ts: new Date().toISOString(), d: d.deviceId, ev: 'off', by: 'auto' }); logDirty = true })
                   .catch((e) => console.error('autooff fail', e))
               }
@@ -177,8 +185,8 @@ export async function handler(): Promise<void> {
             ? await stStatus(stTok, d.deviceId)
             : d.provider === 'tuya' && smart.config.tuya
               ? await tuyaStatus(smart.config.tuya, d.deviceId)
-              : d.provider === 'hejhome' && smart.config.hejhome
-                ? await hejStatus(smart.config.hejhome.token, d.deviceId)
+              : d.provider === 'hejhome' && hejTok
+                ? await hejStatus(hejTok, d.deviceId)
                 : null
           if (s) { sw = s.switch; sampled = true }
         } catch {
@@ -222,6 +230,7 @@ export async function handler(): Promise<void> {
 
 async function sendCommand(
   stTok: string | null,
+  hejTok: string | null,
   config: SmartHomeConfig,
   device: MappedDevice,
   cmd: 'on' | 'off',
@@ -234,7 +243,7 @@ async function sendCommand(
     }
   } else if (device.provider === 'tuya' && config.tuya) {
     await tuyaCommand(config.tuya, device.deviceId, cmd)
-  } else if (device.provider === 'hejhome' && config.hejhome) {
-    await hejCommand(config.hejhome.token, device.deviceId, cmd)
+  } else if (device.provider === 'hejhome' && hejTok) {
+    await hejCommand(hejTok, device.deviceId, cmd)
   }
 }
