@@ -109,6 +109,7 @@ export default function SmartRoom() {
   const [sceneMsg, setSceneMsg] = useState('')
   const [dropTarget, setDropTarget] = useState('')
   const [extraZones, setExtraZones] = useState<{ spaceId: string; name: string }[]>([])
+  const [detailId, setDetailId] = useState('')
   // 연동·기기 배정 섹션 — 설정이 끝난 계정은 기본 접힘 (운영 화면 깔끔하게)
   const [showSetup, setShowSetup] = useState(false)
 
@@ -405,7 +406,13 @@ export default function SmartRoom() {
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0 truncate">
             <span className={`inline-block w-2 h-2 rounded-full mr-1.5 align-middle ${isOn ? 'bg-emerald-500' : s?.switch === 'off' ? 'bg-slate-300' : 'bg-slate-200'}`} />
-            <span className="font-semibold" title={d.name}>{d.alias || d.name}</span>
+            <button
+              onClick={() => { setDetailId(d.deviceId); refreshStatus() }}
+              title="상세 화면 열기"
+              className="font-semibold hover:text-indigo-600"
+            >
+              {d.alias || d.name} <span className="text-slate-300 text-xs">›</span>
+            </button>
             <button onClick={() => startEdit(d)} title="별칭·공간 수정"
               className="ml-1 text-slate-300 hover:text-indigo-600 text-xs align-middle">✏️</button>
           </div>
@@ -512,8 +519,190 @@ export default function SmartRoom() {
     )
   }
 
+  /** 기기 상세 화면 — 스마트싱스 앱처럼 전체 화면 오버레이 */
+  const renderDetail = () => {
+    const d = state.devices.find((x) => x.deviceId === detailId)
+    if (!d) return null
+    const s = statuses[d.deviceId]
+    const isOn = s?.switch === 'on'
+    const isBusy = busy === d.deviceId
+    const isAc = d.caps.includes('ac')
+    const sp = s?.coolingSetpoint
+    const canSwitch = d.caps.includes('switch') || d.caps.includes('ac')
+    const events = (log?.events ?? []).filter((e) => e.d === d.deviceId).slice(0, 30)
+    const days7 = Array.from({ length: 7 }, (_, i) => {
+      const date = kstDate(6 - i)
+      return { date, min: log?.days[date]?.[d.deviceId] ?? 0 }
+    })
+    const maxMin = Math.max(60, ...days7.map((x) => x.min))
+    return (
+      <div className="fixed inset-0 z-50 bg-slate-50 overflow-y-auto">
+        <div className="max-w-lg mx-auto p-4 pb-16" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 1rem)' }}>
+          <div className="flex items-center gap-3 mb-4">
+            <button onClick={() => setDetailId('')} aria-label="뒤로"
+              className="w-10 h-10 rounded-full bg-white border border-slate-200 text-lg text-slate-600 hover:bg-slate-100 shrink-0">←</button>
+            <div className="min-w-0">
+              <div className="font-bold text-lg truncate">{d.alias || d.name}</div>
+              <div className="text-xs text-slate-400 truncate">
+                {[d.zone, d.room, PROVIDER_LABEL[d.provider] ?? d.provider, d.model].filter(Boolean).join(' · ')}
+              </div>
+            </div>
+            <button onClick={() => { startEdit(d); setDetailId('') }} title="별칭·공간 수정"
+              className="ml-auto text-slate-400 hover:text-indigo-600 text-sm shrink-0">✏️ 편집</button>
+          </div>
+
+          <div className={`rounded-3xl p-6 mb-4 transition-colors ${isOn ? 'bg-sky-500 text-white' : 'bg-white border border-slate-200'}`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className={`text-sm ${isOn ? 'text-sky-100' : 'text-slate-400'}`}>
+                  {isOn ? '켜짐' : s?.switch === 'off' ? '꺼짐' : '상태 확인 중'}
+                </div>
+                {isAc && (
+                  <div className="text-3xl font-bold mt-1">
+                    {sp !== undefined ? `${sp}°` : s?.temperature !== undefined ? `${s.temperature.toFixed(1)}°` : '—'}
+                    {isOn && s?.acMode && <span className="text-base font-medium ml-2">{modeLabel(s.acMode)}</span>}
+                  </div>
+                )}
+                {!isAc && s?.temperature !== undefined && (
+                  <div className="text-3xl font-bold mt-1">{s.temperature.toFixed(1)}°</div>
+                )}
+              </div>
+              {canSwitch && (
+                <button
+                  onClick={() => command(d, isOn ? 'off' : 'on')}
+                  disabled={isBusy}
+                  aria-label={isOn ? '끄기' : '켜기'}
+                  className={`w-16 h-16 rounded-full text-2xl font-bold border-2 transition-colors ${isOn ? 'bg-white/20 border-white text-white' : 'bg-slate-50 border-slate-300 text-slate-500 hover:bg-slate-100'} ${isBusy ? 'opacity-50' : ''}`}
+                >⏻</button>
+              )}
+            </div>
+            <div className={`flex flex-wrap gap-2 mt-3 text-xs ${isOn ? 'text-sky-50' : 'text-slate-500'}`}>
+              {s?.temperature !== undefined && <span>실내 {s.temperature.toFixed(1)}°C</span>}
+              {s?.humidity !== undefined && <span>습도 {Math.round(s.humidity)}%</span>}
+              {isOn && s?.power !== undefined && s.power > 0 && <span>⚡ {Math.round(s.power)}W</span>}
+              {s?.energy !== undefined && s.energy > 0 && <span>🔋 {s.energy.toFixed(1)}kWh</span>}
+              {s && !s.online && <span>오프라인</span>}
+            </div>
+          </div>
+
+          {isAc && isOn && (
+            <Card className="mb-4 space-y-3">
+              <div className="flex items-center justify-center gap-4">
+                <button onClick={() => command(d, 'setCoolingSetpoint', Math.max(16, (sp ?? 24) - 0.5))} disabled={isBusy}
+                  className="w-12 h-12 rounded-2xl border border-slate-300 bg-white text-xl font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">−</button>
+                <div className="text-center w-24">
+                  <div className="text-3xl font-bold">{sp !== undefined ? `${sp}°` : '—'}</div>
+                  <div className="text-[11px] text-slate-400">희망 온도</div>
+                </div>
+                <button onClick={() => command(d, 'setCoolingSetpoint', Math.min(30, (sp ?? 24) + 0.5))} disabled={isBusy}
+                  className="w-12 h-12 rounded-2xl border border-slate-300 bg-white text-xl font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">+</button>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap justify-center">
+                {AC_MODES.map((m) => (
+                  <button key={m.value} onClick={() => command(d, 'setAcMode', m.value)} disabled={isBusy}
+                    className={`rounded-lg px-3 py-2 text-xs font-medium border ${s?.acMode === m.value ? 'bg-sky-500 border-sky-500 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'} disabled:opacity-40`}>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2 flex-wrap justify-center">
+                {FAN_MODES.map((m) => (
+                  <button key={m.value} onClick={() => command(d, 'setFanMode', m.value)} disabled={isBusy}
+                    className={`rounded-lg px-3 py-2 text-xs font-medium border ${s?.fanMode === m.value ? 'bg-sky-500 border-sky-500 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'} disabled:opacity-40`}>
+                    팬 {m.label}
+                  </button>
+                ))}
+              </div>
+              {(s?.acOptionalModes ?? []).filter((m) => m !== 'off').length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap justify-center">
+                  {(s?.acOptionalModes ?? []).filter((m) => m !== 'off').map((m) => (
+                    <button key={m}
+                      onClick={() => command(d, 'setAcOptionalMode', s?.acOptionalMode === m ? 'off' : m)}
+                      disabled={isBusy}
+                      className={`rounded-lg px-3 py-2 text-xs font-medium border ${s?.acOptionalMode === m ? 'bg-violet-500 border-violet-500 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'} disabled:opacity-40`}>
+                      {optLabel(m)}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
+
+          {(d.caps.includes('volume') || d.caps.includes('tv') || d.caps.includes('media')) && isOn && (
+            <Card className="mb-4 space-y-3">
+              {d.caps.includes('volume') && (
+                <div className="flex items-center justify-center gap-4">
+                  <button onClick={() => command(d, 'setVolume', Math.max(0, (s?.volume ?? 10) - 5))} disabled={isBusy}
+                    className="w-12 h-12 rounded-2xl border border-slate-300 bg-white text-xl font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">−</button>
+                  <div className="text-center w-24">
+                    <div className="text-3xl font-bold">{s?.mute ? '🔇' : s?.volume ?? '—'}</div>
+                    <div className="text-[11px] text-slate-400">볼륨</div>
+                  </div>
+                  <button onClick={() => command(d, 'setVolume', Math.min(100, (s?.volume ?? 10) + 5))} disabled={isBusy}
+                    className="w-12 h-12 rounded-2xl border border-slate-300 bg-white text-xl font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">+</button>
+                </div>
+              )}
+              <div className="flex items-center gap-2 flex-wrap justify-center">
+                {d.caps.includes('volume') && (
+                  <button onClick={() => command(d, s?.mute ? 'unmute' : 'mute')} disabled={isBusy}
+                    className={`rounded-lg px-3 py-2 text-xs font-medium border disabled:opacity-40 ${s?.mute ? 'bg-slate-600 border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+                    {s?.mute ? '🔊 음소거 해제' : '🔇 음소거'}
+                  </button>
+                )}
+                {d.caps.includes('tv') && (
+                  <>
+                    <button onClick={() => command(d, 'channelUp')} disabled={isBusy}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium hover:bg-slate-50 disabled:opacity-40">채널 ▲</button>
+                    <button onClick={() => command(d, 'channelDown')} disabled={isBusy}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium hover:bg-slate-50 disabled:opacity-40">채널 ▼</button>
+                  </>
+                )}
+                {d.caps.includes('media') && (
+                  <button onClick={() => command(d, s?.playback === 'playing' ? 'pause' : 'play')} disabled={isBusy}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium hover:bg-slate-50 disabled:opacity-40">
+                    {s?.playback === 'playing' ? '⏸ 일시정지' : '▶ 재생'}
+                  </button>
+                )}
+              </div>
+            </Card>
+          )}
+
+          <Card>
+            <div className="font-semibold text-sm mb-3">📊 최근 7일 가동시간</div>
+            <div className="flex items-end gap-2 h-24 mb-1">
+              {days7.map((x) => (
+                <div key={x.date} className="flex-1 flex flex-col items-center gap-1">
+                  <div className="w-full rounded-t bg-sky-400/80" style={{ height: `${Math.max(2, (x.min / maxMin) * 88)}px` }}
+                    title={fmtMin(x.min)} />
+                  <div className="text-[10px] text-slate-400">{x.date.slice(8)}일</div>
+                </div>
+              ))}
+            </div>
+            <div className="text-xs text-slate-500 mb-3">
+              오늘 {fmtMin(days7[6].min)} · 7일 합계 {fmtMin(days7.reduce((a, x) => a + x.min, 0))}
+            </div>
+            {events.length > 0 ? (
+              <div className="border-t border-slate-100 pt-2 space-y-1 max-h-56 overflow-y-auto">
+                {events.map((e, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[11px] text-slate-500">
+                    <span className="font-mono text-slate-400">{fmtEventTime(e.ts)}</span>
+                    <span className={e.ev === 'on' ? 'text-emerald-600' : e.ev === 'off' ? 'text-slate-400' : ''}>{eventLabel(e.ev)}</span>
+                    <span className="rounded bg-slate-100 px-1 text-[10px]">{BY_LABEL[e.by]}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-400">아직 기록이 없어요. 15분마다 자동 수집됩니다.</p>
+            )}
+          </Card>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div>
+      {detailId && renderDetail()}
       <div className="flex items-start justify-between gap-3">
         <PageTitle
           title={mode === 'home' ? '우리집 스마트홈' : '스마트룸'}
