@@ -3,7 +3,7 @@ import { useStore } from '../lib/store'
 import type { CoPerms } from '../lib/api'
 
 /** 집 모드에서 보여줄 메뉴 — 스마트도어는 예약별 출입권 화면이라 제외 */
-const HOME_PATHS = new Set(['/smartroom'])
+const HOME_PATHS = new Set(['/smartroom', '/family'])
 
 type NavPerm = 'view' | keyof CoPerms | 'owner'
 
@@ -19,6 +19,7 @@ const NAV: { to: string; label: string; icon: string; perm: NavPerm }[] = [
   { to: '/guestform', label: '게스트 설문', icon: '📋', perm: 'guest' },
   { to: '/site', label: '미니홈', icon: '🌐', perm: 'guest' },
   { to: '/smartroom', label: '스마트룸', icon: '🌡️', perm: 'smart' },
+  { to: '/family', label: '가족 초대', icon: '👨‍👩‍👧', perm: 'owner' },
   { to: '/team', label: '관리자', icon: '👑', perm: 'owner' },
 ]
 
@@ -33,7 +34,9 @@ export default function Layout() {
     if (perm === 'view') return true
     return !!cloud.perms[perm]
   }
-  const nav = NAV.filter((item) => allowed(item.perm) && (mode !== 'home' || HOME_PATHS.has(item.to)))
+  // 가족 초대는 집 모드 전용 메뉴 (호스트 모드에선 관리자 메뉴가 같은 역할)
+  const nav = NAV.filter((item) =>
+    allowed(item.perm) && (mode === 'home' ? HOME_PATHS.has(item.to) : item.to !== '/family'))
 
   // 첫 접속: 용도 선택 화면
   if (mode === null) {

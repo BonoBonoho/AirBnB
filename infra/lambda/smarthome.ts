@@ -35,6 +35,11 @@ export interface DeviceStatus {
   /** 볼륨 (0-100) — TV·스피커 */
   volume?: number
   mute?: boolean
+  /** 에어컨 부가 모드 (무풍·열대야 등) — 삼성 custom capability */
+  acOptionalMode?: string
+  acOptionalModes?: string[]
+  /** 재생 상태 (playing/paused 등) — TV·스피커 */
+  playback?: string
 }
 
 /** OAuth 토큰 묶음 — 액세스 토큰은 24시간, 리프레시 토큰으로 자동 갱신 */
@@ -206,6 +211,8 @@ export async function stListDevices(token: string): Promise<SmartDevice[]> {
     if (capIds.includes('switch')) caps.push('switch')
     if (capIds.includes('thermostatCoolingSetpoint') || capIds.includes('airConditionerMode')) caps.push('ac')
     if (capIds.includes('audioVolume')) caps.push('volume')
+    if (capIds.includes('tvChannel')) caps.push('tv')
+    if (capIds.includes('mediaPlayback')) caps.push('media')
     const model = d.ocf?.modelNumber?.split('|')[0] || undefined
     return {
       provider: 'smartthings' as const,
@@ -244,10 +251,19 @@ export async function stStatus(token: string, deviceId: string): Promise<DeviceS
     volume: numOrU(main.audioVolume?.volume?.value),
     mute: main.audioMute?.mute?.value === 'muted' ? true
       : main.audioMute?.mute?.value === 'unmuted' ? false : undefined,
+    acOptionalMode: typeof main['custom.airConditionerOptionalMode']?.acOptionalMode?.value === 'string'
+      ? (main['custom.airConditionerOptionalMode'].acOptionalMode.value as string) : undefined,
+    acOptionalModes: Array.isArray(main['custom.airConditionerOptionalMode']?.supportedAcOptionalMode?.value)
+      ? (main['custom.airConditionerOptionalMode'].supportedAcOptionalMode.value as string[]) : undefined,
+    playback: typeof main.mediaPlayback?.playbackStatus?.value === 'string'
+      ? (main.mediaPlayback.playbackStatus.value as string) : undefined,
   }
 }
 
-export type StCommandName = 'on' | 'off' | 'setCoolingSetpoint' | 'setAcMode' | 'setFanMode' | 'setVolume' | 'mute' | 'unmute'
+export type StCommandName =
+  | 'on' | 'off' | 'setCoolingSetpoint' | 'setAcMode' | 'setFanMode'
+  | 'setVolume' | 'mute' | 'unmute'
+  | 'setAcOptionalMode' | 'channelUp' | 'channelDown' | 'play' | 'pause'
 
 export async function stCommand(
   token: string, deviceId: string, command: StCommandName, arg?: number | string,
@@ -259,7 +275,17 @@ export async function stCommand(
         ? { component: 'main', capability: 'airConditionerMode', command: 'setAirConditionerMode', arguments: [String(arg ?? 'cool')] }
         : command === 'setFanMode'
           ? { component: 'main', capability: 'airConditionerFanMode', command: 'setFanMode', arguments: [String(arg ?? 'auto')] }
-          : { component: 'main', capability: 'switch', command }
+          : command === 'setVolume'
+            ? { component: 'main', capability: 'audioVolume', command: 'setVolume', arguments: [Number(arg ?? 10)] }
+            : command === 'mute' || command === 'unmute'
+              ? { component: 'main', capability: 'audioMute', command }
+              : command === 'setAcOptionalMode'
+                ? { component: 'main', capability: 'custom.airConditionerOptionalMode', command: 'setAcOptionalMode', arguments: [String(arg ?? 'off')] }
+                : command === 'channelUp' || command === 'channelDown'
+                  ? { component: 'main', capability: 'tvChannel', command }
+                  : command === 'play' || command === 'pause'
+                    ? { component: 'main', capability: 'mediaPlayback', command }
+                    : { component: 'main', capability: 'switch', command }
   await stFetch(token, `/devices/${deviceId}/commands`, {
     method: 'POST',
     body: JSON.stringify({ commands: [cmd] }),
