@@ -32,6 +32,9 @@ export interface DeviceStatus {
   power?: number
   /** 누적 사용량 (kWh) — 전력측정 플러그 등 */
   energy?: number
+  /** 볼륨 (0-100) — TV·스피커 */
+  volume?: number
+  mute?: boolean
 }
 
 /** OAuth 토큰 묶음 — 액세스 토큰은 24시간, 리프레시 토큰으로 자동 갱신 */
@@ -202,6 +205,7 @@ export async function stListDevices(token: string): Promise<SmartDevice[]> {
     if (capIds.includes('relativeHumidityMeasurement')) caps.push('humidity')
     if (capIds.includes('switch')) caps.push('switch')
     if (capIds.includes('thermostatCoolingSetpoint') || capIds.includes('airConditionerMode')) caps.push('ac')
+    if (capIds.includes('audioVolume')) caps.push('volume')
     const model = d.ocf?.modelNumber?.split('|')[0] || undefined
     return {
       provider: 'smartthings' as const,
@@ -237,10 +241,13 @@ export async function stStatus(token: string, deviceId: string): Promise<DeviceS
     power: (powerRaw && typeof powerRaw === 'object' ? numOrU(powerRaw.power) : undefined)
       ?? numOrU(main.powerMeter?.power?.value),
     energy: numOrU(main.energyMeter?.energy?.value),
+    volume: numOrU(main.audioVolume?.volume?.value),
+    mute: main.audioMute?.mute?.value === 'muted' ? true
+      : main.audioMute?.mute?.value === 'unmuted' ? false : undefined,
   }
 }
 
-export type StCommandName = 'on' | 'off' | 'setCoolingSetpoint' | 'setAcMode' | 'setFanMode'
+export type StCommandName = 'on' | 'off' | 'setCoolingSetpoint' | 'setAcMode' | 'setFanMode' | 'setVolume' | 'mute' | 'unmute'
 
 export async function stCommand(
   token: string, deviceId: string, command: StCommandName, arg?: number | string,

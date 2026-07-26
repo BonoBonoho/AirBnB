@@ -2,8 +2,8 @@ import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useStore } from '../lib/store'
 import type { CoPerms } from '../lib/api'
 
-/** 집 모드에서 보여줄 메뉴 (스마트홈 관련만) */
-const HOME_PATHS = new Set(['/smartroom', '/door'])
+/** 집 모드에서 보여줄 메뉴 — 스마트도어는 예약별 출입권 화면이라 제외 */
+const HOME_PATHS = new Set(['/smartroom'])
 
 type NavPerm = 'view' | keyof CoPerms | 'owner'
 
@@ -85,9 +85,9 @@ export default function Layout() {
       onChange={(e) => cloud.workspaces.switch(e.target.value || null)}
       className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-600"
     >
-      <option value="">🏠 내 숙소</option>
+      <option value="">🏠 {mode === 'home' ? '내 공간' : '내 숙소'}</option>
       {cloud.workspaces.list.map((w) => (
-        <option key={w.sub} value={w.sub}>🤝 {w.ownerEmail}님의 숙소</option>
+        <option key={w.sub} value={w.sub}>🤝 {w.ownerEmail}님의 {mode === 'home' ? '집' : '숙소'}</option>
       ))}
     </select>
   )
@@ -101,7 +101,7 @@ export default function Layout() {
           <div className="text-xs text-slate-400 mt-0.5">
             {mode === 'home' ? '🏠 우리집 스마트홈' : '숙소 수익 관리 · 자동 가격'}
           </div>
-          {mode !== 'home' && wsSwitcher && <div className="mt-3">{wsSwitcher}</div>}
+          {wsSwitcher && <div className="mt-3">{wsSwitcher}</div>}
           <div className="mt-3">{modeSwitch}</div>
         </div>
         <nav className="flex-1 p-3 space-y-1">
@@ -145,7 +145,7 @@ export default function Layout() {
             스테이프라이스{mode === 'home' && <span className="ml-1 text-xs font-medium text-indigo-500">집</span>}
           </div>
           <div className="flex items-center gap-2 min-w-0">
-            {mode !== 'home' && wsSwitcher}
+            {wsSwitcher}
             <button
               onClick={() => setMode(mode === 'home' ? 'host' : 'home')}
               className="text-[11px] text-slate-500 underline shrink-0"

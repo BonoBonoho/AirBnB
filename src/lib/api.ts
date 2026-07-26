@@ -49,6 +49,9 @@ export interface SmartDeviceStatus {
   fanMode?: string
   power?: number
   energy?: number
+  /** 볼륨 (0-100) — TV·스피커 */
+  volume?: number
+  mute?: boolean
 }
 
 /** 기기 사용 기록 — 일별 가동시간(분) + 최근 켬/끔 이벤트 */
@@ -58,7 +61,7 @@ export interface SmartLog {
   events: { ts: string; d: string; ev: string; by: 'user' | 'auto' | 'sample' }[]
 }
 
-export type SmartCommandName = 'on' | 'off' | 'setCoolingSetpoint' | 'setAcMode' | 'setFanMode'
+export type SmartCommandName = 'on' | 'off' | 'setCoolingSetpoint' | 'setAcMode' | 'setFanMode' | 'setVolume' | 'mute' | 'unmute'
 
 /** 원탭 씬 — 여러 기기를 한 버튼으로 켜기/끄기 (외출·귀가·취침 등) */
 export interface SmartScene {
