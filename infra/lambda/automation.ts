@@ -121,19 +121,24 @@ export async function handler(): Promise<void> {
       let dirty = false
       let logDirty = false
 
-      // 스마트싱스 토큰 — OAuth면 자동 갱신 후 저장 (전체 doc을 다시 써서 available 등 보존)
+      // 스마트싱스 토큰 — OAuth면 자동 갱신 후 저장. 저장 직전 최신 doc을
+      // 다시 읽어 병합 (낡은 사본으로 덮어쓰면 회전된 리프레시 토큰이 유실됨)
       const stTok = smart.config.smartthings
         ? await resolveStToken(smart.config.smartthings, ST_CLIENT_ID, ST_CLIENT_SECRET, async (oauth) => {
-            smart.config.smartthings = { ...smart.config.smartthings, oauth }
-            await putDoc(sub, 'SMARTHOME', smart)
+            const latest = (await getDoc<typeof smart>(sub, 'SMARTHOME')) ?? smart
+            latest.config.smartthings = { ...latest.config.smartthings, oauth }
+            smart.config.smartthings = latest.config.smartthings
+            await putDoc(sub, 'SMARTHOME', latest)
           }).catch((e) => { console.error(`st token refresh failed for ${sub}:`, e); return null })
         : null
 
       // 헤이홈 토큰 — 계정 연동이면 자동 갱신 후 저장
       const hejTok = smart.config.hejhome
         ? await resolveHejToken(smart.config.hejhome, async (oauth) => {
-            smart.config.hejhome = { ...smart.config.hejhome, oauth }
-            await putDoc(sub, 'SMARTHOME', smart)
+            const latest = (await getDoc<typeof smart>(sub, 'SMARTHOME')) ?? smart
+            latest.config.hejhome = { ...latest.config.hejhome, oauth }
+            smart.config.hejhome = latest.config.hejhome
+            await putDoc(sub, 'SMARTHOME', latest)
           }).catch((e) => { console.error(`hej token refresh failed for ${sub}:`, e); return null })
         : null
 

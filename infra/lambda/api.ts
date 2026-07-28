@@ -45,19 +45,28 @@ interface CohostMap {
   owners: { sub: string; ownerEmail: string; perms: CoPerms }[]
 }
 
-/** 스마트싱스 토큰 결정 — OAuth면 자동 갱신 후 저장, 아니면 PAT */
+/**
+ * 스마트싱스 토큰 결정 — OAuth면 자동 갱신 후 저장, 아니면 PAT.
+ * 저장 직전에 최신 doc을 다시 읽어 병합한다 — 리프레시 토큰은 사용 시
+ * 회전되므로, 요청 시작 때 읽어둔 낡은 doc으로 덮어쓰면 새 토큰이
+ * 유실되어 "Invalid refresh token"이 난다.
+ */
 async function stTokenFor(sub: string, smart: SmartDoc): Promise<string | null> {
   return resolveStToken(smart.config.smartthings, ST_CLIENT_ID, ST_CLIENT_SECRET, async (oauth) => {
-    smart.config.smartthings = { ...smart.config.smartthings, oauth }
-    await putDoc(sub, 'SMARTHOME', smart)
+    const latest = (await getDoc<SmartDoc>(sub, 'SMARTHOME')) ?? smart
+    latest.config.smartthings = { ...latest.config.smartthings, oauth }
+    smart.config.smartthings = latest.config.smartthings
+    await putDoc(sub, 'SMARTHOME', latest)
   })
 }
 
 /** 헤이홈 토큰 결정 — 계정 연동이면 자동 갱신 후 저장, 아니면 수동 토큰 */
 async function hejTokenFor(sub: string, smart: SmartDoc): Promise<string | null> {
   return resolveHejToken(smart.config.hejhome, async (oauth) => {
-    smart.config.hejhome = { ...smart.config.hejhome, oauth }
-    await putDoc(sub, 'SMARTHOME', smart)
+    const latest = (await getDoc<SmartDoc>(sub, 'SMARTHOME')) ?? smart
+    latest.config.hejhome = { ...latest.config.hejhome, oauth }
+    smart.config.hejhome = latest.config.hejhome
+    await putDoc(sub, 'SMARTHOME', latest)
   })
 }
 
@@ -424,6 +433,22 @@ export async function handler(
       if (!can('smart')) return json(403, { error: '스마트룸 설정 권한이 없습니다. 소유자에게 요청하세요.' })
       const body = JSON.parse(event.body ?? '{}')
       const prev = (await getDoc<{ config: SmartHomeConfig; devices: SmartDevice[]; rules: unknown; available: SmartDevice[]; scenes?: unknown; schedules?: unknown }>(sub, 'SMARTHOME')) ?? { config: {}, devices: [], rules: {}, available: [] }
+      // 클라이언트가 보낸 config는 페이지 로드 시점의 사본이라 그 사이 회전된
+      // OAuth 토큰을 되돌릴 수 있다 — oauth/creds는 항상 서버 저장본을 우선.
+      if (body.config && typeof body.config === 'object') {
+        const cfgIn = body.config as SmartHomeConfig
+        const prevCfg = prev.config ?? {}
+        if (cfgIn.smartthings && prevCfg.smartthings?.oauth) {
+          cfgIn.smartthings = { ...cfgIn.smartthings, oauth: prevCfg.smartthings.oauth }
+        }
+        if (cfgIn.hejhome && prevCfg.hejhome) {
+          cfgIn.hejhome = {
+            ...cfgIn.hejhome,
+            oauth: prevCfg.hejhome.oauth ?? cfgIn.hejhome.oauth,
+            creds: prevCfg.hejhome.creds ?? cfgIn.hejhome.creds,
+          }
+        }
+      }
       const next = {
         config: body.config !== undefined ? body.config : prev.config,
         devices: body.devices !== undefined ? body.devices : prev.devices,
@@ -542,11 +567,13 @@ export async function handler(
       const hubDoc = await getDoc<{ devices?: SmartDevice[] }>(sub, 'HUBDEVICES')
       if (hubDoc?.devices?.length) out.push(...hubDoc.devices)
       if (out.length > 0) {
-        // 전체 doc 스프레드로 저장 — scenes/schedules 등 다른 필드 보존
+        // 저장 직전 최신 doc을 다시 읽어 available만 교체 — 외부 API 호출 동안
+        // 회전된 OAuth 토큰이나 scenes/schedules를 덮어쓰지 않도록
+        const latest = (await getDoc<SmartDoc>(sub, 'SMARTHOME')) ?? smart
         await putDoc(sub, 'SMARTHOME', {
-          ...smart,
-          devices: smart.devices ?? [],
-          rules: smart.rules ?? {},
+          ...latest,
+          devices: latest.devices ?? [],
+          rules: latest.rules ?? {},
           available: out,
         })
       }
