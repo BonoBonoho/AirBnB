@@ -12,6 +12,14 @@ dist
 dist-ssr
 *.local
 
+# 로컬 개발용 설정 — npm run dev가 배포 사이트에서 자동 생성. 프로덕션은
+# 배포 시 CDK가 config.json을 따로 만들어 올리므로 커밋하지 않는다.
+public/config.json
+
+# 허브 로컬 세션·설정 (비밀번호/쿠키 포함 가능)
+hub/config.json
+hub/profile/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

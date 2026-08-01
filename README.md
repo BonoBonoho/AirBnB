@@ -7,9 +7,28 @@ PriceLabs(pricelabs.co) 스타일의 **한국형 숙소 수익 관리 · 다이�
 
 ```bash
 npm install
-npm run dev      # 개발 서버 (http://localhost:5173)
+npm run dev      # 로컬 개발 서버 (http://localhost:5173) — 실제 배포 API에 연결
 npm run build    # 프로덕션 빌드
 ```
+
+### 로컬 개발 = 실제 클라우드에 붙어 미리보기
+
+`npm run dev`를 실행하면 배포된 사이트(`stayprice.co`)의 `config.json`을
+자동으로 받아 `public/config.json`에 저장하고, **로컬 화면이 실제 AWS API·
+로그인·데이터에 그대로 연결**됩니다. 코드를 고치면 배포(약 10분)를 기다릴
+필요 없이 즉시 브라우저에 반영돼요. (config.json의 apiUrl·Cognito ID는 비밀이
+아니라 어차피 배포 사이트에 공개되는 값이며, `public/config.json`은 git에
+커밋되지 않습니다.)
+
+- **설정 강제 갱신**: `FORCE_CONFIG=1 npm run dev`
+- **다른 환경 보기**: `CONFIG_URL=https://다른도메인/config.json npm run dev`
+- **데모 모드(클라우드 없이 목업 데이터)**: `public/config.json`을 지우고
+  `npm run dev:demo` — 브라우저 localStorage만 사용
+- 로컬에서 로그인은 배포와 동일한 계정으로 하면 됩니다 (Cognito는 모든
+  출처를 허용, API의 CORS도 `*`라 localhost에서 바로 접속됨).
+
+프로덕션 배포는 그대로 GitHub Actions → AWS(CDK)이며, 배포 시 CDK가
+config.json을 실제 값으로 새로 생성해 올리므로 로컬 파일과 무관합니다.
 
 ## 주요 기능
 
