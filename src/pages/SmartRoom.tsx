@@ -438,6 +438,9 @@ export default function SmartRoom() {
 
     const canSwitch = d.caps.includes('switch') || d.caps.includes('ac')
     const isAc = d.caps.includes('ac')
+    // IR(적외선) 에어컨 — 온도 센서 cap이 없는 리모컨 방식. 상태를 보고하지
+    // 않으므로 켜짐 여부와 무관하게 제어판을 항상 열어 둔다.
+    const irAc = isAc && d.provider === 'tuya' && !d.caps.includes('temp')
     const sp = s?.coolingSetpoint
 
     return (
@@ -487,8 +490,11 @@ export default function SmartRoom() {
             ))}
           </div>
         )}
-        {isAc && isOn && (
+        {((isAc && isOn) || irAc) && (
           <div className="mt-2.5 space-y-2">
+            {irAc && (
+              <div className="text-[11px] text-slate-400">🔺 리모컨(IR) 방식 — 현재 상태는 표시되지 않고, 누르면 신호만 전송됩니다</div>
+            )}
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-slate-500 w-8">온도</span>
               <button onClick={() => command(d, 'setCoolingSetpoint', Math.max(16, (sp ?? 24) - 0.5))} disabled={isBusy}
@@ -580,6 +586,7 @@ export default function SmartRoom() {
     const isOn = s?.switch === 'on'
     const isBusy = busy === d.deviceId
     const isAc = d.caps.includes('ac')
+    const irAc = isAc && d.provider === 'tuya' && !d.caps.includes('temp')
     const sp = s?.coolingSetpoint
     const canSwitch = d.caps.includes('switch') || d.caps.includes('ac')
     const events = (log?.events ?? []).filter((e) => e.d === d.deviceId).slice(0, 30)
@@ -638,8 +645,11 @@ export default function SmartRoom() {
             </div>
           </div>
 
-          {isAc && isOn && (
+          {((isAc && isOn) || irAc) && (
             <Card className="mb-4 space-y-3">
+              {irAc && (
+                <div className="text-[11px] text-slate-400 text-center">🔺 리모컨(IR) 방식 — 현재 상태는 표시되지 않고, 누르면 신호만 전송됩니다</div>
+              )}
               <div className="flex items-center justify-center gap-4">
                 <button onClick={() => command(d, 'setCoolingSetpoint', Math.max(16, (sp ?? 24) - 0.5))} disabled={isBusy}
                   className="w-12 h-12 rounded-2xl border border-slate-300 bg-white text-xl font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">−</button>

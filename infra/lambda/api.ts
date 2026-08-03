@@ -642,8 +642,10 @@ export async function handler(
           if (!tok) return json(400, { error: '스마트싱스 토큰이 없습니다. 다시 연동해 주세요.' })
           await stCommand(tok, String(deviceId), command as StCommandName, arg)
         } else if (provider === 'tuya' && smart.config.tuya) {
-          if (command !== 'on' && command !== 'off') return json(400, { error: 'Tuya 기기는 켜기/끄기만 지원합니다' })
-          await tuyaCommand(smart.config.tuya, String(deviceId), command)
+          // 켜기/끄기 + IR 에어컨 온도·모드·팬 (볼륨/음소거 등은 미지원)
+          const tuyaAllowed = ['on', 'off', 'setCoolingSetpoint', 'setAcMode', 'setFanMode']
+          if (!tuyaAllowed.includes(command)) return json(400, { error: 'Tuya 기기가 지원하지 않는 명령입니다' })
+          await tuyaCommand(smart.config.tuya, String(deviceId), command as 'on' | 'off' | 'setCoolingSetpoint' | 'setAcMode' | 'setFanMode', arg)
         } else if (provider === 'hejhome' && smart.config.hejhome) {
           if (command !== 'on' && command !== 'off') return json(400, { error: '헤이홈 기기는 켜기/끄기만 지원합니다' })
           const tok = await hejTokenFor(sub, smart)
