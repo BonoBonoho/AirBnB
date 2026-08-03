@@ -357,6 +357,12 @@ export async function tuyaListDevices(cfg: NonNullable<SmartHomeConfig['tuya']>)
     if (codes.some((c) => /temp_current|va_temperature/.test(c))) caps.push('temp')
     if (codes.some((c) => /humidity/.test(c))) caps.push('humidity')
     if (codes.some((c) => /^switch(_1)?$|switch_led/.test(c))) caps.push('switch')
+    // IR(적외선) 에어컨 — 상태 코드가 없는 단방향 기기라 카테고리·이름으로 인식.
+    // Tuya IR 에어컨 카테고리: infrared_ac / qt / kt, 또는 이름에 에어컨/냉난방
+    const isIrAc =
+      /infrared_ac|^qt$|^kt$|kongtiao/.test(d.category) ||
+      (codes.length === 0 && /에어컨|냉난방|냉방|난방|air\s?con|aircon/i.test(d.name))
+    if (isIrAc && !caps.includes('ac')) caps.push('switch', 'ac')
     return { provider: 'tuya' as const, deviceId: d.id, name: d.name, caps, model: d.category }
   })
 }
@@ -385,18 +391,59 @@ export async function tuyaStatus(
   }
 }
 
+/** 여러 DP 코드 후보를 순서대로 시도 — 기기마다 코드명이 달라서 */
+async function tuyaSendFirst(
+  cfg: NonNullable<SmartHomeConfig['tuya']>, token: string, deviceId: string,
+  candidates: { code: string; value: unknown }[],
+): Promise<void> {
+  let lastErr: unknown
+  for (const c of candidates) {
+    try {
+      await tuyaRequest(cfg, 'POST', `/v1.0/devices/${deviceId}/commands`, { commands: [c] }, token)
+      return
+    } catch (e) { lastErr = e }
+  }
+  throw lastErr ?? new Error('Tuya 명령 실패')
+}
+
+// IR 에어컨 표준 DP 매핑 (우리 값 → Tuya infrared_ac enum)
+const TUYA_AC_MODE: Record<string, string> = { cool: 'cold', heat: 'hot', dry: 'wet', wind: 'wind', auto: 'auto' }
+const TUYA_AC_WIND: Record<string, string> = { low: 'low', medium: 'mid', high: 'high', auto: 'auto', turbo: 'high' }
+
 export async function tuyaCommand(
-  cfg: NonNullable<SmartHomeConfig['tuya']>, deviceId: string, command: 'on' | 'off',
+  cfg: NonNullable<SmartHomeConfig['tuya']>, deviceId: string,
+  command: 'on' | 'off' | 'setCoolingSetpoint' | 'setAcMode' | 'setFanMode',
+  arg?: number | string,
 ): Promise<void> {
   const token = await tuyaToken(cfg)
-  await tuyaRequest(cfg, 'POST', `/v1.0/devices/${deviceId}/commands`, {
-    commands: [{ code: 'switch_1', value: command === 'on' }],
-  }, token).catch(async () => {
-    // switch_1이 없는 기기(전구 등)는 switch/switch_led로 재시도
-    await tuyaRequest(cfg, 'POST', `/v1.0/devices/${deviceId}/commands`, {
-      commands: [{ code: 'switch', value: command === 'on' }],
-    }, token)
-  })
+  if (command === 'on' || command === 'off') {
+    const v = command === 'on'
+    // 일반 스위치(switch_1/switch/switch_led)와 IR 에어컨 전원(power/PowerOn) 모두 시도
+    await tuyaSendFirst(cfg, token, deviceId, [
+      { code: 'switch_1', value: v }, { code: 'switch', value: v },
+      { code: 'switch_led', value: v }, { code: 'power', value: v },
+      { code: 'PowerOn', value: v },
+    ])
+    return
+  }
+  if (command === 'setCoolingSetpoint') {
+    await tuyaSendFirst(cfg, token, deviceId, [
+      { code: 'temp', value: Number(arg ?? 24) }, { code: 'temp_set', value: Number(arg ?? 24) },
+      { code: 'T', value: Number(arg ?? 24) },
+    ])
+    return
+  }
+  if (command === 'setAcMode') {
+    const m = TUYA_AC_MODE[String(arg ?? 'cool')] ?? 'cold'
+    await tuyaSendFirst(cfg, token, deviceId, [{ code: 'mode', value: m }, { code: 'M', value: m }])
+    return
+  }
+  if (command === 'setFanMode') {
+    const w = TUYA_AC_WIND[String(arg ?? 'auto')] ?? 'auto'
+    await tuyaSendFirst(cfg, token, deviceId, [
+      { code: 'wind', value: w }, { code: 'windspeed', value: w }, { code: 'F', value: w },
+    ])
+  }
 }
 
 // ─── 헤이홈(고퀄) 오픈API ──────────────────────────────────────
