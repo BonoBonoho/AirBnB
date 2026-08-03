@@ -102,6 +102,10 @@ export default function SmartRoom() {
   const [loaded, setLoaded] = useState(false)
   const [available, setAvailable] = useState<SmartDevice[]>([])
   const [statuses, setStatuses] = useState<Record<string, SmartDeviceStatus>>({})
+  // IR(적외선) 기기는 상태를 못 읽으므로 "마지막에 보낸 값"을 브라우저에 기억해 표시
+  const [irState, setIrState] = useState<Record<string, Partial<SmartDeviceStatus>>>(() => {
+    try { return JSON.parse(localStorage.getItem('stayprice.irstate.v1') || '{}') } catch { return {} }
+  })
   const [log, setLog] = useState<SmartLog | null>(null)
   const [showHistory, setShowHistory] = useState<Record<string, boolean>>({})
   const [msg, setMsg] = useState('')
@@ -138,6 +142,15 @@ export default function SmartRoom() {
     }).catch(() => {})
     cloud.smart.history().then((r) => setLog(r.log)).catch(() => {})
   }, [cloud])
+
+  /** IR 기기의 마지막 명령 값을 기억 (localStorage 영구 저장) */
+  const rememberIr = (deviceId: string, patch: Partial<SmartDeviceStatus>) => {
+    setIrState((prev) => {
+      const next = { ...prev, [deviceId]: { ...prev[deviceId], ...patch } }
+      try { localStorage.setItem('stayprice.irstate.v1', JSON.stringify(next)) } catch { /* 용량 초과 무시 */ }
+      return next
+    })
+  }
 
   useEffect(() => {
     if (!cloud) return
@@ -348,22 +361,25 @@ export default function SmartRoom() {
 
   const command = async (d: SmartDevice, cmd: SmartCommandName, arg?: number | string) => {
     setBusy(d.deviceId)
+    // 이 명령이 반영하는 상태 조각
+    const patch: Partial<SmartDeviceStatus> = {}
+    if (cmd === 'on' || cmd === 'off') patch.switch = cmd
+    if (cmd === 'setCoolingSetpoint') patch.coolingSetpoint = Number(arg)
+    if (cmd === 'setAcMode') patch.acMode = String(arg)
+    if (cmd === 'setFanMode') patch.fanMode = String(arg)
+    if (cmd === 'setVolume') patch.volume = Number(arg)
+    if (cmd === 'mute') patch.mute = true
+    if (cmd === 'unmute') patch.mute = false
+    const isIr = d.caps.includes('ac') && d.provider === 'tuya' && !d.caps.includes('temp')
     try {
       await cloud.smart.command({ provider: d.provider, deviceId: d.deviceId, command: cmd, arg })
-      // 낙관적 반영 (실제 값은 1.2초 후 재조회로 확정)
+      // 낙관적 반영 (실제 값은 1.5초 후 재조회로 확정)
       setStatuses((p) => {
-        const s = p[d.deviceId]
-        if (!s) return p
-        const next = { ...s }
-        if (cmd === 'on' || cmd === 'off') next.switch = cmd
-        if (cmd === 'setCoolingSetpoint') next.coolingSetpoint = Number(arg)
-        if (cmd === 'setAcMode') next.acMode = String(arg)
-        if (cmd === 'setFanMode') next.fanMode = String(arg)
-        if (cmd === 'setVolume') next.volume = Number(arg)
-        if (cmd === 'mute') next.mute = true
-        if (cmd === 'unmute') next.mute = false
-        return { ...p, [d.deviceId]: next }
+        const base = p[d.deviceId] ?? { deviceId: d.deviceId, online: true }
+        return { ...p, [d.deviceId]: { ...base, ...patch } }
       })
+      // IR 기기는 상태를 못 읽으므로 이 값을 영구 기억
+      if (isIr) rememberIr(d.deviceId, patch)
       setTimeout(refreshStatus, 1500)
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e))
@@ -401,8 +417,16 @@ export default function SmartRoom() {
     return d?.alias || d?.name || '기기'
   }
 
+  /** 실측 상태 + IR 기억값 병합 (IR 기기는 기억값이 표시 상태) */
+  const mergedStatus = (deviceId: string): SmartDeviceStatus | undefined => {
+    const live = statuses[deviceId]
+    const ir = irState[deviceId]
+    if (!ir) return live
+    return { ...live, ...ir, deviceId, online: live?.online ?? true }
+  }
+
   const renderDevice = (d: SmartDevice) => {
-    const s = statuses[d.deviceId]
+    const s = mergedStatus(d.deviceId)
     const isOn = s?.switch === 'on'
     const isBusy = busy === d.deviceId
 
@@ -493,13 +517,13 @@ export default function SmartRoom() {
         {((isAc && isOn) || irAc) && (
           <div className="mt-2.5 space-y-2">
             {irAc && (
-              <div className="text-[11px] text-slate-400">🔺 리모컨(IR) 방식 — 현재 상태는 표시되지 않고, 누르면 신호만 전송됩니다</div>
+              <div className="text-[11px] text-slate-400">🔺 리모컨(IR) 방식 — 마지막에 보낸 설정을 기억해 표시합니다 (실제 기기 상태와 다를 수 있어요)</div>
             )}
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-slate-500 w-8">온도</span>
               <button onClick={() => command(d, 'setCoolingSetpoint', Math.max(16, (sp ?? 24) - 0.5))} disabled={isBusy}
                 className="w-9 h-9 rounded-xl border border-slate-300 bg-white text-lg font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">−</button>
-              <span className="w-12 text-center font-bold text-base">{sp !== undefined ? `${sp}°` : '—'}</span>
+              <span className="w-12 text-center font-bold text-base">{sp !== undefined ? `${sp}°` : irAc ? '24°' : '—'}</span>
               <button onClick={() => command(d, 'setCoolingSetpoint', Math.min(30, (sp ?? 24) + 0.5))} disabled={isBusy}
                 className="w-9 h-9 rounded-xl border border-slate-300 bg-white text-lg font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">+</button>
             </div>
@@ -582,7 +606,7 @@ export default function SmartRoom() {
   const renderDetail = () => {
     const d = state.devices.find((x) => x.deviceId === detailId)
     if (!d) return null
-    const s = statuses[d.deviceId]
+    const s = mergedStatus(d.deviceId)
     const isOn = s?.switch === 'on'
     const isBusy = busy === d.deviceId
     const isAc = d.caps.includes('ac')
@@ -648,13 +672,13 @@ export default function SmartRoom() {
           {((isAc && isOn) || irAc) && (
             <Card className="mb-4 space-y-3">
               {irAc && (
-                <div className="text-[11px] text-slate-400 text-center">🔺 리모컨(IR) 방식 — 현재 상태는 표시되지 않고, 누르면 신호만 전송됩니다</div>
+                <div className="text-[11px] text-slate-400 text-center">🔺 리모컨(IR) 방식 — 마지막에 보낸 설정을 기억해 표시합니다 (실제 기기 상태와 다를 수 있어요)</div>
               )}
               <div className="flex items-center justify-center gap-4">
                 <button onClick={() => command(d, 'setCoolingSetpoint', Math.max(16, (sp ?? 24) - 0.5))} disabled={isBusy}
                   className="w-12 h-12 rounded-2xl border border-slate-300 bg-white text-xl font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40">−</button>
                 <div className="text-center w-24">
-                  <div className="text-3xl font-bold">{sp !== undefined ? `${sp}°` : '—'}</div>
+                  <div className="text-3xl font-bold">{sp !== undefined ? `${sp}°` : irAc ? '24°' : '—'}</div>
                   <div className="text-[11px] text-slate-400">희망 온도</div>
                 </div>
                 <button onClick={() => command(d, 'setCoolingSetpoint', Math.min(30, (sp ?? 24) + 0.5))} disabled={isBusy}
