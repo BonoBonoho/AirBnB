@@ -13,6 +13,10 @@ import {
   resolveStToken, stAuthorizeUrl, stExchangeCode,
 } from './smarthome'
 import type { SmartHomeConfig, SmartDevice, DeviceStatus, SmartLog, StCommandName } from './smarthome'
+import {
+  ttLogin, resolveTtToken, ttListLocks, ttGetPasscode, ttUnlock, ttLock,
+} from './ttlock'
+import type { TtlockConfig, TtLock } from './ttlock'
 
 const s3 = new S3Client({})
 const lambdaClient = new LambdaClient({})
@@ -57,6 +61,25 @@ async function stTokenFor(sub: string, smart: SmartDoc): Promise<string | null> 
     latest.config.smartthings = { ...latest.config.smartthings, oauth }
     smart.config.smartthings = latest.config.smartthings
     await putDoc(sub, 'SMARTHOME', latest)
+  })
+}
+
+type DoorDoc = {
+  config: TtlockConfig
+  locks: TtLock[]
+  /** 예약별 발급된 비밀번호 (bookingId → 코드/만료) */
+  passcodes: Record<string, { lockId: number; keyboardPwdId: number; code: string; startDate: number; endDate: number; guestName?: string; issuedAt: string }>
+  /** 숙소별 배정된 잠금 (listingId → lockId) */
+  assign: Record<string, number>
+}
+
+/** TTLock 토큰 결정 — 만료 1시간 전 자동 갱신 후 저장 */
+async function ttTokenFor(sub: string, door: DoorDoc): Promise<string | null> {
+  return resolveTtToken(door.config, async (oauth) => {
+    const latest = (await getDoc<DoorDoc>(sub, 'DOORLOCK')) ?? door
+    latest.config = { ...latest.config, oauth }
+    door.config = latest.config
+    await putDoc(sub, 'DOORLOCK', latest)
   })
 }
 
@@ -538,6 +561,110 @@ export async function handler(
       } catch (e) {
         return json(422, { error: e instanceof Error ? e.message : '헤이홈 연동 실패' })
       }
+    }
+
+    // ── TTLock 도어락 ──
+    // 계정 연동 (개발자 clientId/secret + TTLock 계정). 비밀번호는 발급에만 쓰고 저장 안 함
+    if (path === '/api/door/ttlock-connect' && method === 'POST') {
+      if (!can('smart')) return json(403, { error: '도어락 연동 권한이 없습니다. 소유자에게 요청하세요.' })
+      const b = JSON.parse(event.body ?? '{}')
+      const clientId = String(b.clientId ?? '').trim()
+      const clientSecret = String(b.clientSecret ?? '').trim()
+      const username = String(b.username ?? '').trim()
+      const password = String(b.password ?? '')
+      const region: 'api' | 'euapi' = b.region === 'api' ? 'api' : 'euapi'
+      if (!clientId || !clientSecret || !username || !password) {
+        return json(400, { error: '개발자 Client ID·Secret과 TTLock 계정을 모두 입력해 주세요' })
+      }
+      try {
+        const oauth = await ttLogin({ clientId, clientSecret, region }, username, password)
+        const cfg: TtlockConfig = { clientId, clientSecret, region, oauth }
+        const locks = await ttListLocks(cfg, oauth.accessToken)
+        const prev = (await getDoc<DoorDoc>(sub, 'DOORLOCK')) ?? { config: cfg, locks: [], passcodes: {}, assign: {} }
+        await putDoc(sub, 'DOORLOCK', { ...prev, config: cfg, locks })
+        return json(200, { ok: true, locks })
+      } catch (e) {
+        return json(422, { error: e instanceof Error ? e.message : 'TTLock 연동 실패' })
+      }
+    }
+
+    // 도어락 상태 (연동 여부·잠금 목록·발급 비번·배정)
+    if (path === '/api/door' && method === 'GET') {
+      const door = await getDoc<DoorDoc>(sub, 'DOORLOCK')
+      if (!door) return json(200, { connected: false, region: 'euapi', locks: [], passcodes: {}, assign: {} })
+      return json(200, {
+        connected: !!door.config?.oauth,
+        region: door.config?.region ?? 'euapi',
+        locks: door.locks ?? [],
+        passcodes: door.passcodes ?? {},
+        assign: door.assign ?? {},
+      })
+    }
+
+    // 잠금 목록 새로고침
+    if (path === '/api/door/locks' && method === 'GET') {
+      const door = await getDoc<DoorDoc>(sub, 'DOORLOCK')
+      if (!door?.config?.oauth) return json(400, { error: '먼저 TTLock을 연동해 주세요' })
+      const tok = await ttTokenFor(sub, door)
+      if (!tok) return json(400, { error: 'TTLock 토큰이 없습니다. 다시 연동해 주세요.' })
+      try {
+        const locks = await ttListLocks(door.config, tok)
+        await putDoc(sub, 'DOORLOCK', { ...door, locks })
+        return json(200, { locks })
+      } catch (e) { return json(422, { error: e instanceof Error ? e.message : '조회 실패' }) }
+    }
+
+    // 숙소↔잠금 배정
+    if (path === '/api/door/assign' && method === 'PUT') {
+      if (!can('smart')) return json(403, { error: '권한이 없습니다' })
+      const b = JSON.parse(event.body ?? '{}')
+      const door = (await getDoc<DoorDoc>(sub, 'DOORLOCK'))
+      if (!door) return json(400, { error: '먼저 TTLock을 연동해 주세요' })
+      door.assign = { ...(door.assign ?? {}), [String(b.listingId)]: Number(b.lockId) }
+      await putDoc(sub, 'DOORLOCK', door)
+      return json(200, { ok: true })
+    }
+
+    // 예약별 기간제 비밀번호 발급 (이미 있으면 그대로 반환)
+    if (path === '/api/door/passcode' && method === 'POST') {
+      if (!can('smart')) return json(403, { error: '권한이 없습니다' })
+      const b = JSON.parse(event.body ?? '{}')
+      const bookingId = String(b.bookingId ?? '')
+      const lockId = Number(b.lockId ?? 0)
+      const startDate = Number(b.startDate ?? 0)
+      const endDate = Number(b.endDate ?? 0)
+      const guestName = String(b.guestName ?? '').slice(0, 40)
+      if (!bookingId || !lockId || !startDate || !endDate) return json(400, { error: '필수 정보가 부족합니다' })
+      const door = await getDoc<DoorDoc>(sub, 'DOORLOCK')
+      if (!door?.config?.oauth) return json(400, { error: '먼저 TTLock을 연동해 주세요' })
+      const existing = door.passcodes?.[bookingId]
+      if (existing && existing.lockId === lockId && existing.endDate === endDate) {
+        return json(200, { code: existing.code, reused: true })
+      }
+      const tok = await ttTokenFor(sub, door)
+      if (!tok) return json(400, { error: 'TTLock 토큰이 없습니다. 다시 연동해 주세요.' })
+      try {
+        const r = await ttGetPasscode(door.config, tok, lockId, guestName || bookingId, startDate, endDate)
+        door.passcodes = { ...(door.passcodes ?? {}) }
+        door.passcodes[bookingId] = { lockId, keyboardPwdId: r.keyboardPwdId, code: r.keyboardPwd, startDate, endDate, guestName, issuedAt: new Date().toISOString() }
+        await putDoc(sub, 'DOORLOCK', door)
+        return json(200, { code: r.keyboardPwd })
+      } catch (e) { return json(422, { error: e instanceof Error ? e.message : '비밀번호 발급 실패' }) }
+    }
+
+    // 원격 열기 / 잠그기
+    if ((path === '/api/door/unlock' || path === '/api/door/lock') && method === 'POST') {
+      if (!can('smart')) return json(403, { error: '권한이 없습니다' })
+      const lockId = Number(JSON.parse(event.body ?? '{}').lockId ?? 0)
+      const door = await getDoc<DoorDoc>(sub, 'DOORLOCK')
+      if (!door?.config?.oauth || !lockId) return json(400, { error: '먼저 TTLock 연동·잠금 선택이 필요합니다' })
+      const tok = await ttTokenFor(sub, door)
+      if (!tok) return json(400, { error: 'TTLock 토큰이 없습니다. 다시 연동해 주세요.' })
+      try {
+        if (path === '/api/door/unlock') await ttUnlock(door.config, tok, lockId)
+        else await ttLock(door.config, tok, lockId)
+        return json(200, { ok: true })
+      } catch (e) { return json(422, { error: e instanceof Error ? e.message : '명령 실패' }) }
     }
 
     // 연동된 계정의 기기 목록 (양쪽 provider 합침) — 조회 결과는 저장해서 새로고침 후에도 유지

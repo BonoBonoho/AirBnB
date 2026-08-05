@@ -230,6 +230,25 @@ export const api = {
     request<{ ok: boolean }>(cfg, 'PUT', '/api/guest-notes', { bookingId, note }),
   stOauthUrl: (cfg: AppConfig) =>
     request<{ url: string; redirectUri: string }>(cfg, 'POST', '/api/smarthome/st-oauth-url'),
+  doorGet: (cfg: AppConfig) =>
+    request<{
+      connected: boolean; region: 'api' | 'euapi'
+      locks: { lockId: number; alias: string }[]
+      passcodes: Record<string, { lockId: number; code: string; startDate: number; endDate: number; guestName?: string; issuedAt: string }>
+      assign: Record<string, number>
+    }>(cfg, 'GET', '/api/door'),
+  doorConnect: (cfg: AppConfig, p: { clientId: string; clientSecret: string; username: string; password: string; region: 'api' | 'euapi' }) =>
+    request<{ ok: boolean; locks: { lockId: number; alias: string }[] }>(cfg, 'POST', '/api/door/ttlock-connect', p),
+  doorLocks: (cfg: AppConfig) =>
+    request<{ locks: { lockId: number; alias: string }[] }>(cfg, 'GET', '/api/door/locks'),
+  doorAssign: (cfg: AppConfig, listingId: string, lockId: number) =>
+    request<{ ok: boolean }>(cfg, 'PUT', '/api/door/assign', { listingId, lockId }),
+  doorPasscode: (cfg: AppConfig, p: { bookingId: string; lockId: number; startDate: number; endDate: number; guestName: string }) =>
+    request<{ code: string; reused?: boolean }>(cfg, 'POST', '/api/door/passcode', p),
+  doorUnlock: (cfg: AppConfig, lockId: number) =>
+    request<{ ok: boolean }>(cfg, 'POST', '/api/door/unlock', { lockId }),
+  doorLock: (cfg: AppConfig, lockId: number) =>
+    request<{ ok: boolean }>(cfg, 'POST', '/api/door/lock', { lockId }),
   hubPair: (cfg: AppConfig, name: string) =>
     request<{ hubId: string; key: string; apiUrl: string }>(cfg, 'POST', '/api/smarthome/hub-pair', { name }),
   hubList: (cfg: AppConfig) =>
