@@ -57,6 +57,16 @@ interface Store {
       hubList: () => ReturnType<typeof api.hubList>
       hubRemove: (hubId: string) => ReturnType<typeof api.hubRemove>
     }
+    /** TTLock 도어락 API */
+    door: {
+      get: () => ReturnType<typeof api.doorGet>
+      connect: (p: Parameters<typeof api.doorConnect>[1]) => ReturnType<typeof api.doorConnect>
+      locks: () => ReturnType<typeof api.doorLocks>
+      assign: (listingId: string, lockId: number) => ReturnType<typeof api.doorAssign>
+      passcode: (p: Parameters<typeof api.doorPasscode>[1]) => ReturnType<typeof api.doorPasscode>
+      unlock: (lockId: number) => ReturnType<typeof api.doorUnlock>
+      lock: (lockId: number) => ReturnType<typeof api.doorLock>
+    }
     /** 게스트 메모 (예약 id → 메모) */
     guestNotes: Record<string, string>
     saveGuestNote: (bookingId: string, note: string) => Promise<void>
@@ -388,6 +398,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               hubPair: (name) => api.hubPair(config, name),
               hubList: () => api.hubList(config),
               hubRemove: (hubId) => api.hubRemove(config, hubId),
+            },
+            door: {
+              get: () => api.doorGet(config),
+              connect: (p) => api.doorConnect(config, p),
+              locks: () => api.doorLocks(config),
+              assign: (listingId, lockId) => api.doorAssign(config, listingId, lockId),
+              passcode: (p) => api.doorPasscode(config, p),
+              unlock: (lockId) => api.doorUnlock(config, lockId),
+              lock: (lockId) => api.doorLock(config, lockId),
             },
             guestNotes,
             saveGuestNote: async (bookingId: string, note: string) => {
