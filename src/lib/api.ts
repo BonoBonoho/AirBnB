@@ -236,7 +236,10 @@ export const api = {
       locks: { lockId: number; alias: string }[]
       passcodes: Record<string, { lockId: number; code: string; startDate: number; endDate: number; guestName?: string; issuedAt: string }>
       assign: Record<string, number>
+      autoIssue: boolean
     }>(cfg, 'GET', '/api/door'),
+  doorAuto: (cfg: AppConfig, enabled: boolean) =>
+    request<{ ok: boolean }>(cfg, 'PUT', '/api/door/auto', { enabled }),
   doorConnect: (cfg: AppConfig, p: { clientId: string; clientSecret: string; username: string; password: string; region: 'api' | 'euapi' }) =>
     request<{ ok: boolean; locks: { lockId: number; alias: string }[] }>(cfg, 'POST', '/api/door/ttlock-connect', p),
   doorLocks: (cfg: AppConfig) =>

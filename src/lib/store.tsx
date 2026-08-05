@@ -63,6 +63,7 @@ interface Store {
       connect: (p: Parameters<typeof api.doorConnect>[1]) => ReturnType<typeof api.doorConnect>
       locks: () => ReturnType<typeof api.doorLocks>
       assign: (listingId: string, lockId: number) => ReturnType<typeof api.doorAssign>
+      auto: (enabled: boolean) => ReturnType<typeof api.doorAuto>
       passcode: (p: Parameters<typeof api.doorPasscode>[1]) => ReturnType<typeof api.doorPasscode>
       unlock: (lockId: number) => ReturnType<typeof api.doorUnlock>
       lock: (lockId: number) => ReturnType<typeof api.doorLock>
@@ -404,6 +405,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               connect: (p) => api.doorConnect(config, p),
               locks: () => api.doorLocks(config),
               assign: (listingId, lockId) => api.doorAssign(config, listingId, lockId),
+              auto: (enabled) => api.doorAuto(config, enabled),
               passcode: (p) => api.doorPasscode(config, p),
               unlock: (lockId) => api.doorUnlock(config, lockId),
               lock: (lockId) => api.doorLock(config, lockId),

@@ -11,6 +11,7 @@ import {
   stCommand, tuyaCommand, stStatus, tuyaStatus, hejStatus, hejCommand, resolveStToken, resolveHejToken,
   type SmartHomeConfig, type SmartLog,
 } from './smarthome'
+import { resolveTtToken, ttGetPasscode, type TtlockConfig } from './ttlock'
 
 const ST_CLIENT_ID = process.env.ST_OAUTH_CLIENT_ID || undefined
 const ST_CLIENT_SECRET = process.env.ST_OAUTH_CLIENT_SECRET || undefined
@@ -283,6 +284,86 @@ export async function handler(): Promise<void> {
       }
     } catch (e) {
       console.error(`automation failed for ${sub}:`, e)
+    }
+  }
+
+  await autoIssuePasscodes()
+}
+
+/**
+ * TTLock 자동 비밀번호 발급 — 연동·잠금배정된 숙소의 예약에 대해
+ * 체크인 3일 전부터 미리 기간제 비번을 발급한다. (게이트웨이로 자동 동기화)
+ * 이미 발급된 예약은 건너뛴다.
+ */
+interface DoorDoc {
+  config: TtlockConfig
+  locks: unknown[]
+  passcodes: Record<string, { lockId: number; keyboardPwdId: number; code: string; startDate: number; endDate: number; guestName?: string; issuedAt: string }>
+  assign: Record<string, number>
+  autoIssue?: boolean
+}
+
+async function autoIssuePasscodes(): Promise<void> {
+  let lastKey: Record<string, unknown> | undefined
+  const users: string[] = []
+  do {
+    const res = await ddb.send(new ScanCommand({
+      TableName: TABLE_NAME,
+      FilterExpression: 'sk = :sk',
+      ExpressionAttributeValues: { ':sk': 'DOORLOCK' },
+      ProjectionExpression: 'pk',
+      ExclusiveStartKey: lastKey,
+    }))
+    for (const item of res.Items ?? []) users.push((item.pk as string).replace('USER#', ''))
+    lastKey = res.LastEvaluatedKey
+  } while (lastKey)
+
+  const today = kstDateStr(kstNow())
+  for (const sub of users) {
+    try {
+      const door = await getDoc<DoorDoc>(sub, 'DOORLOCK')
+      // autoIssue는 기본 켜짐(undefined) — 명시적으로 false면 건너뜀
+      if (!door?.config?.oauth || door.autoIssue === false) continue
+      if (!door.assign || Object.keys(door.assign).length === 0) continue
+      const bookings = (await getDoc<BookingLite[]>(sub, 'BOOKINGS')) ?? []
+      let tok: string | null = null
+      let changed = false
+      for (const b of bookings) {
+        if (b.status === 'cancelled') continue
+        const lockId = door.assign[b.listingId]
+        if (!lockId) continue
+        if (door.passcodes?.[b.id]) continue // 이미 발급됨
+        // 체크아웃 안 지났고, 체크인이 3일 이내(또는 이미 시작)인 예약만
+        const [y, mo, d] = b.checkIn.split('-').map(Number)
+        const [ty, tmo, td] = today.split('-').map(Number)
+        const checkout = new Date(Date.UTC(y, mo - 1, d + b.nights))
+        if (kstDateStr(checkout) < today) continue
+        const daysToCheckin = Math.round((Date.UTC(y, mo - 1, d) - Date.UTC(ty, tmo - 1, td)) / 86400000)
+        if (daysToCheckin > 3) continue
+        const startDate = new Date(`${b.checkIn}T15:00:00+09:00`).getTime()
+        const endDate = new Date(`${kstDateStr(checkout)}T11:00:00+09:00`).getTime()
+        try {
+          if (!tok) {
+            tok = await resolveTtToken(door.config, async (oauth) => {
+              const latest = (await getDoc<DoorDoc>(sub, 'DOORLOCK')) ?? door
+              latest.config = { ...latest.config, oauth }
+              door.config = latest.config
+              await putDoc(sub, 'DOORLOCK', latest)
+            })
+          }
+          if (!tok) break
+          const r = await ttGetPasscode(door.config, tok, lockId, b.id, startDate, endDate)
+          door.passcodes = { ...(door.passcodes ?? {}) }
+          door.passcodes[b.id] = { lockId, keyboardPwdId: r.keyboardPwdId, code: r.keyboardPwd, startDate, endDate, issuedAt: new Date().toISOString() }
+          changed = true
+          console.log(`passcode auto-issued: ${sub} ${b.id}`)
+        } catch (e) {
+          console.error(`passcode issue failed ${sub} ${b.id}:`, e)
+        }
+      }
+      if (changed) await putDoc(sub, 'DOORLOCK', door)
+    } catch (e) {
+      console.error(`door automation failed for ${sub}:`, e)
     }
   }
 }
