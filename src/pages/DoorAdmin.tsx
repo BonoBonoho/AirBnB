@@ -193,6 +193,22 @@ export default function DoorAdmin() {
             </div>
           )}
 
+          {connected && (
+            <label className="mt-3 flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={door?.autoIssue !== false}
+                onChange={async (e) => {
+                  const enabled = e.target.checked
+                  setDoor((p) => p ? { ...p, autoIssue: enabled } : p)
+                  await cloud.door.auto(enabled).catch(() => {})
+                }}
+                className="accent-rose-500"
+              />
+              예약 확정 시 비밀번호 자동 발급 (체크인 3일 전 미리 생성 · 15분 주기)
+            </label>
+          )}
+
           {showConnect && (
             <div className="mt-3 rounded-xl border border-slate-200 p-3 space-y-2">
               <p className="text-xs text-slate-500 leading-relaxed">

@@ -71,6 +71,8 @@ type DoorDoc = {
   passcodes: Record<string, { lockId: number; keyboardPwdId: number; code: string; startDate: number; endDate: number; guestName?: string; issuedAt: string }>
   /** 숙소별 배정된 잠금 (listingId → lockId) */
   assign: Record<string, number>
+  /** 예약 확정 시 자동 비번 발급 (기본 켜짐) */
+  autoIssue?: boolean
 }
 
 /** TTLock 토큰 결정 — 만료 1시간 전 자동 갱신 후 저장 */
@@ -591,14 +593,25 @@ export async function handler(
     // 도어락 상태 (연동 여부·잠금 목록·발급 비번·배정)
     if (path === '/api/door' && method === 'GET') {
       const door = await getDoc<DoorDoc>(sub, 'DOORLOCK')
-      if (!door) return json(200, { connected: false, region: 'euapi', locks: [], passcodes: {}, assign: {} })
+      if (!door) return json(200, { connected: false, region: 'euapi', locks: [], passcodes: {}, assign: {}, autoIssue: true })
       return json(200, {
         connected: !!door.config?.oauth,
         region: door.config?.region ?? 'euapi',
         locks: door.locks ?? [],
         passcodes: door.passcodes ?? {},
         assign: door.assign ?? {},
+        autoIssue: door.autoIssue !== false,
       })
+    }
+
+    // 예약 확정 시 자동 발급 on/off
+    if (path === '/api/door/auto' && method === 'PUT') {
+      if (!can('smart')) return json(403, { error: '권한이 없습니다' })
+      const enabled = JSON.parse(event.body ?? '{}').enabled !== false
+      const door = await getDoc<DoorDoc>(sub, 'DOORLOCK')
+      if (!door) return json(400, { error: '먼저 TTLock을 연동해 주세요' })
+      await putDoc(sub, 'DOORLOCK', { ...door, autoIssue: enabled })
+      return json(200, { ok: true })
     }
 
     // 잠금 목록 새로고침
